@@ -7,6 +7,41 @@ import html
 from domain import NextTrip
 from domain.transport_type import TransportType
 
+METRO_EMOJIS = {
+    "L1": "🟥", "L2": "🟪", "L3": "🟩", "L4": "🟨",
+    "L5": "🟦", "L9S": "🟧", "L9N": "🟧",
+}
+
+TRAM_EMOJIS = {
+    "T1": "🟩", "T2": "🟩", "T3": "🟩",
+    "T4": "🟩", "T5": "🟩", "T6": "🟩"
+}
+
+FGC_EMOJIS = {
+    # Barcelona – Vallés
+    "L1": "🟥", "S1": "🟥", "S2": "🟩", "L6": "🟪", "L7": "🟫", "L12": "🟪",
+    # Llobregat – Anoia
+    "L8": "🟪", "S3": "🟦", "S4": "🟨", "S8": "🟦", "S9": "🟥",
+    "R5": "🟦", "R50": "🟦", "R6": "⬛", "R60": "⬛",
+    # Lleida – La Pobla de Segur
+    "RL1": "🟩", "RL2": "🟩"
+}
+
+RODALIES_EMOJIS = {
+    "R1": "🟦", "R2": "🟩", "R2 Nord": "🟩", "R2 Sud": "🟩",
+    "R3": "🟥", "R4": "🟨", "R7": "⬜", "R8": "🟪",
+    "R11": "🟦", "R13": "⬛", "R14": "🟪", "R15": "🟫",
+    "R16": "🟥", "R17": "🟧", "RG1": "🟦", "RT1": "🟦",
+    "RT2": "⬜", "RL3": "🟩", "RL4": "🟨",
+}
+
+STATIC_EMOJI_MAP = {
+    TransportType.METRO: METRO_EMOJIS,
+    TransportType.TRAM: TRAM_EMOJIS,
+    TransportType.FGC: FGC_EMOJIS,
+    TransportType.RODALIES: RODALIES_EMOJIS,
+}
+
 @dataclass
 class LineRoute:
     route_id: str
@@ -20,87 +55,41 @@ class LineRoute:
     line_code: Optional[str] = ""
 
     def __post_init__(self):
-        if self.line_type == TransportType.METRO:
-            emojis = {
-                "L1": "🟥",
-                "L2": "🟪",
-                "L3": "🟩",
-                "L4": "🟨",
-                "L5": "🟦",
-                "L9S": "🟧",
-                "L9N": "🟧",
-            }
-
-        elif self.line_type == TransportType.TRAM:
-            emojis = {
-                "T1": "🟩",
-                "T2": "🟩",
-                "T3": "🟩",
-                "T4": "🟩",
-                "T5": "🟩",
-                "T6": "🟩"
-            }
-
-        elif self.line_type == TransportType.BUS:
-            prefix = self.line_name[0].upper() if self.line_name else ""
+        emoji = ""
+        
+        if self.line_type == TransportType.BUS:
+            emoji, self.color = self._get_bus_style()
             
-            match prefix:
-                case "H":
-                    emoji, color = "🟦", "#003888"
-                case "V":
-                    emoji, color = "🟩", "#6AB023"
-                case "D":
-                    emoji, color = "🟪", "#93107E"
-                case "N":
-                    emoji, color = "🟦", "#0062A1"
-                case "M":
-                    emoji, color = "🔴", "#FF4500"
-                case "L":
-                    emoji, color = "🟨", "#FFAA00"
-                case _ if self.line_name.isdigit():
-                    emoji, color = "🔴", "#E30613"
-                case _: 
-                    emoji, color = "🚌", "#FF0000"
+        else:
+            lookup_dict = STATIC_EMOJI_MAP.get(self.line_type, {})
+            emoji = lookup_dict.get(self.line_name, "")
 
-            self.name_with_emoji = f"{emoji} {self.line_name}"
-            self.color = color
+        self.name_with_emoji = f"{emoji} {self.line_name}".strip()
 
-        elif self.line_type == TransportType.FGC:
-            emojis = {
-                #Barcelona – Vallés
-                "L1": "🟥",
-                "S1": "🟥",
-                "S2": "🟩",
-                "L6": "🟪",
-                "L7": "🟫",
-                "L12": "🟪",
+    def _get_bus_style(self):
+        """Helper to determine Bus emoji and hex color based on name prefix."""
+        if not self.line_name:
+            return "🚌", "#FF0000"
 
-                #Llobregat – Anoia
-                "L8": "🟪",
-                "S3": "🟦",
-                "S4": "🟨",
-                "S8": "🟦",
-                "S9": "🟥",
-                "R5": "🟦",
-                "R50": "🟦",
-                "R6": "⬛",
-                "R60": "⬛",
-
-                #Lleida – La Pobla de Segur
-                "RL1": "🟩",
-                "RL2": "🟩"
-            }
-        elif self.line_type == TransportType.RODALIES:
-            emojis = {
-                "R1": "🟦", "R2": "🟩", "R2 Nord": "🟩", "R2 Sud": "🟩",
-                "R3": "🟥", "R4": "🟨", "R7": "⬜", "R8": "🟪",
-                "R11": "🟦", "R13": "⬛", "R14": "🟪", "R15": "🟫",
-                "R16": "🟥", "R17": "🟧", "RG1": "🟦", "RT1": "🟦",
-                "RT2": "⬜", "RL3": "🟩", "RL4": "🟨",
-            }
-
-        emoji = emojis.get(self.line_name, "")
-        self.name_with_emoji = f"{emoji} {self.line_name}"
+        prefix = self.line_name[0].upper()
+        
+        match prefix:
+            case "H":
+                return "🟦", "#003888"
+            case "V":
+                return "🟩", "#6AB023"
+            case "D":
+                return "🟪", "#93107E"
+            case "N":
+                return "🟦", "#0062A1"
+            case "M":
+                return "🔴", "#FF4500"
+            case "L":
+                return "🟨", "#FFAA00"
+            case _ if self.line_name.isdigit():
+                return "🔴", "#E30613"
+            case _: 
+                return "🚌", "#FF0000"
 
     @staticmethod
     def simple_list(route, arriving_threshold=40, default_msg: str = '') -> str:
