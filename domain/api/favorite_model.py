@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 
 class FavoriteItem(BaseModel):
-    USER_ID: str = None
     TYPE: str
     STATION_CODE: str
     STATION_NAME: str

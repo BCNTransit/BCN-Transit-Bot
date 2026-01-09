@@ -358,7 +358,6 @@ class UserDataManager:
             fav_items = []
             for f in db_favs:
                 fav_items.append(FavoriteItem(
-                    USER_ID=str(user_id),
                     TYPE=f.transport_type,
                     STATION_CODE=f.station_code,
                     STATION_NAME=f.station_name,
