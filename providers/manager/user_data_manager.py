@@ -505,9 +505,11 @@ class UserDataManager:
             stmt = (
                 select(DBSearchHistory.query)
                 .where(DBSearchHistory.user_id == internal_id)
-                .order_by(DBSearchHistory.timestamp.desc())
+                .group_by(DBSearchHistory.query)
+                .order_by(func.max(DBSearchHistory.timestamp).desc())
                 .limit(10)
             )
+            
             result = await session.execute(stmt)
             searches = result.scalars().all()
             return searches
