@@ -319,7 +319,6 @@ def get_user_router(
             )
             return result
         except Exception as e:
-            # MEJORA: HTTPException en lugar de devolver dict
             raise HTTPException(status_code=500, detail=f"Error registering user: {str(e)}")
         
     @router.post("/{user_id}/notifications/toggle/{status}")
@@ -350,7 +349,6 @@ def get_user_router(
         try:
             return await user_data_manager.get_favorites_by_user(ClientType.ANDROID.value, user_id)
         except Exception as e:
-            # El frontend espera una lista, si devolvemos un dict con "error" la app crasheará al parsear
             raise HTTPException(status_code=500, detail=str(e))
         
     @router.get("/{user_id}/favorites/exists")
