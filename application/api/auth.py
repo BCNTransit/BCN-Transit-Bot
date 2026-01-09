@@ -8,16 +8,6 @@ async def get_current_user_uid(credentials: HTTPAuthorizationCredentials = Depen
     token = credentials.credentials
     try:
         decoded_token = auth.verify_id_token(token)
-        
-        uid = decoded_token.get('uid')
-        
-        if not uid:
-            uid = decoded_token.get('sub')
-            
-        if not uid:
-            uid = decoded_token.get('user_id')
-
-        return uid
-        
-    except Exception as e:
-        raise HTTPException(...)
+        return decoded_token.get('uid') or decoded_token.get('sub') or decoded_token.get('user_id')
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido")
