@@ -30,6 +30,7 @@ class LineRoute:
                 "L9S": "🟧",
                 "L9N": "🟧",
             }
+
         elif self.line_type == TransportType.TRAM:
             emojis = {
                 "T1": "🟩",
@@ -39,23 +40,31 @@ class LineRoute:
                 "T5": "🟩",
                 "T6": "🟩"
             }
+
         elif self.line_type == TransportType.BUS:
-            emojis = {
-                "H": "🟦",
-                "D": "🟪",
-                "V": "🟩",
-                "M": "🔴",
-                "X": "🟨",
-                "N": "🟦"
-            }
-            for letter in self.line_name:
-                if letter in emojis:
-                    self.name_with_emoji = f"{emojis[letter]} {self.line_name}"
-                    break
-            else:
-                if self.line_name.isdigit():
-                    self.name_with_emoji = f"🔴 {self.line_name}"
-            return
+            prefix = self.line_name[0].upper() if self.line_name else ""
+            
+            match prefix:
+                case "H":
+                    emoji, color = "🟦", "#003888"
+                case "V":
+                    emoji, color = "🟩", "#6AB023"
+                case "D":
+                    emoji, color = "🟪", "#93107E"
+                case "N":
+                    emoji, color = "🟦", "#0062A1"
+                case "M":
+                    emoji, color = "🔴", "#FF4500"
+                case "L":
+                    emoji, color = "🟨", "#FFAA00"
+                case _ if self.line_name.isdigit():
+                    emoji, color = "🔴", "#E30613"
+                case _: 
+                    emoji, color = "🚌", "#FF0000"
+
+            self.name_with_emoji = f"{emoji} {self.line_name}"
+            self.color = color
+
         elif self.line_type == TransportType.FGC:
             emojis = {
                 #Barcelona – Vallés
