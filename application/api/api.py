@@ -1,10 +1,11 @@
 
 import math
 from typing import List
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
 from pydantic import BaseModel
 
+from application.api.auth import get_current_user_uid
 from application.services.transport.bicing_service import BicingService
 from application.services.transport.bus_service import BusService
 from application.services.transport.fgc_service import FgcService
@@ -265,12 +266,12 @@ def get_results_router(
         return near_results
 
     @router.get("/search")
-    async def search_stations(name: str, user_id: str = None):
-        if user_id:
+    async def search_stations(name: str, uid: str = Depends(get_current_user_uid)):
+        if uid:
              asyncio.create_task(
                  user_data_manager.register_search(
                      query=name, 
-                     user_id_ext=user_id
+                     user_id_ext=uid
                  )
              )
 
@@ -295,9 +296,9 @@ def get_results_router(
         return search_results
 
     @router.get("/search/history")
-    async def search_history(user_id: str):
-        if user_id:
-            return await user_data_manager.get_search_history(user_id_ext=user_id)
+    async def search_history(uid: str = Depends(get_current_user_uid)):
+        if uid:
+            return await user_data_manager.get_search_history(user_id_ext=uid)
         return []
 
     return router
