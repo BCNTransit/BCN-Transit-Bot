@@ -87,7 +87,7 @@ class LineRoute:
             case "L":
                 return "🟨", "#FFAA00"
             case "X":
-                return "⬛", "#FFFFFF00"
+                return "⬛", "#000000"
             case _ if self.line_name.isdigit():
                 return "🔴", "#E30613"
             case _: 
