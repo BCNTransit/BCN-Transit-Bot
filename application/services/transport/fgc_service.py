@@ -100,10 +100,23 @@ class FgcService(ServiceBase):
 
     async def get_stations_by_line(self, line_id) -> List[FgcStation]:
         start = time.perf_counter()
+        
         stations = await self.get_all_stations()
         result = [s for s in stations if s.line_id == line_id]
+
+        if not result:
+            return []
+
+        tasks = [self.get_fgc_station_connections(s.code) for s in result]
+        
+        connections_results = await asyncio.gather(*tasks)
+
+        for station, connections in zip(result, connections_results):
+            station.connections = connections
+
         elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) ejecutado en {elapsed:.4f} s")
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) -> {len(result)} stations con conexiones ({elapsed:.4f} s)")
+        
         return result
 
     async def get_stations_by_name(self, station_name) -> List[FgcStation]:

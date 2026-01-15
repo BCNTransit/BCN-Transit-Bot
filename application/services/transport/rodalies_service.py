@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from typing import List
 import time
@@ -113,11 +114,23 @@ class RodaliesService(ServiceBase):
     # === OTHER CALLS ===
     async def get_stations_by_line(self, line_id) -> List[RodaliesStation]:
         start = time.perf_counter()
-        line = await self.get_line_by_id(line_id)      
-        result = line.stations
+        
+        line = await self.get_line_by_id(line_id)
+        stations = line.stations
+        
+        if not stations:
+            return []
+        
+        tasks = [self.get_rodalies_station_connections(s.code) for s in stations]
+        connections_results = await asyncio.gather(*tasks)
+
+        for station, connections in zip(stations, connections_results):
+            station.connections = connections
+
         elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) ejecutado en {elapsed:.4f} s")
-        return result
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) -> {len(stations)} stations con conexiones ({elapsed:.4f} s)")
+        
+        return stations
 
     async def get_stations_by_name(self, station_name) -> List[RodaliesStation]:
         start = time.perf_counter()

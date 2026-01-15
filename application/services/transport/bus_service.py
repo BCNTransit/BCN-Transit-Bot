@@ -107,20 +107,24 @@ class BusService(ServiceBase):
     async def get_stops_by_line(self, line_id) -> List[BusStop]:
         start = time.perf_counter()
         cache_key = f"bus_line_{line_id}_stops"
+        
         cached_stations = await self._get_from_cache_or_data(cache_key, None, cache_ttl=3600*24)
-        if cached_stations is not None and cached_stations:
+        if cached_stations:
             elapsed = time.perf_counter() - start
             logger.info(f"[{self.__class__.__name__}] get_stops_by_line({line_id}) -> cached ({elapsed:.4f} s)")
             return cached_stations
 
-        line = await self.get_line_by_id(line_id)
-        api_stops = await self.tmb_api_service.get_bus_line_stops(line_id)
+        line_task = self.get_line_by_id(line_id)
+        stops_task = self.tmb_api_service.get_bus_line_stops(line_id)        
+        line, api_stops = await asyncio.gather(line_task, stops_task)
+        line_stops = [BusStop.update_bus_stop_with_line_info(api_stop, line) for api_stop in api_stops]
 
-        line_stops = []
-        for api_stop in api_stops:
-            stop = BusStop.update_bus_stop_with_line_info(api_stop, line)
-            stop.connections = await self.get_stop_connections(stop.code)
-            line_stops.append(stop)
+        connections_tasks = [self.get_stop_connections(stop.code) for stop in line_stops]        
+        connections_results = await asyncio.gather(*connections_tasks)
+
+        for stop, connections in zip(line_stops, connections_results):
+            stop.connections = connections
+
         result = await self._get_from_cache_or_data(cache_key, line_stops, cache_ttl=3600*24)
 
         elapsed = time.perf_counter() - start
