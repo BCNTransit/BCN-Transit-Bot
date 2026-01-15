@@ -123,7 +123,9 @@ class MetroService(ServiceBase):
 
         async def process_station(api_station):
             async with semaphore_connections:
-                return MetroStation.update_metro_station_with_line_info(api_station, line)
+                station = MetroStation.update_metro_station_with_line_info(api_station, line)
+                station.connections = await self.get_station_connections(station.code)
+                return station
 
         line_stations = await asyncio.gather(*[process_station(s) for s in api_stations])
         result = await self._get_from_cache_or_data(cache_key, line_stations, cache_ttl=3600*24*7)

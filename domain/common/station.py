@@ -2,9 +2,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from domain.common.alert import Alert
-from domain.common.line import Line
+from domain.common.connections import Connections
 from domain.transport_type import TransportType
-from providers.helpers.html_helper import HtmlHelper
 
 @dataclass(kw_only=True)
 class Station:
@@ -25,6 +24,7 @@ class Station:
     line_name_with_emoji: Optional[str] = None
     has_alerts: Optional[bool] = False
     alerts: Optional[List[Alert]] = field(default_factory=list)
+    connections: Optional[Connections] = None
 
     @staticmethod
     def get_alert_by_language(station, language: str):
