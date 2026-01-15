@@ -118,25 +118,13 @@ class TramService(ServiceBase):
 
     async def get_stops_by_line(self, line_id: str) -> List[TramStation]:
         start = time.perf_counter()
-        
         stops = await self._get_from_cache_or_api(
             f"tram_line_{line_id}_stops",
             lambda: self.tram_api_service.get_stops_on_line(line_id),
             cache_ttl=3600*24
         )
-
-        if not stops:
-            return []
-        
-        connection_tasks = [self.get_tram_stop_connections(stop.code) for stop in stops]
-        connections_results = await asyncio.gather(*connection_tasks)
-        
-        for stop, connections in zip(stops, connections_results):
-            stop.connections = connections
-
         elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_stops_by_line({line_id}) -> {len(stops)} stops with connections (tiempo: {elapsed:.4f} s)")
-        
+        logger.info(f"[{self.__class__.__name__}] get_stops_by_line({line_id}) -> {len(stops)} stops (tiempo: {elapsed:.4f} s)")
         return stops
 
     async def get_stop_routes(self, stop_code: int) -> List[LineRoute]:
