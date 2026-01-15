@@ -119,6 +119,7 @@ class BusService(ServiceBase):
         line_stops = []
         for api_stop in api_stops:
             stop = BusStop.update_bus_stop_with_line_info(api_stop, line)
+            stop.connections = await self.get_stop_connections(stop.code)
             line_stops.append(stop)
         result = await self._get_from_cache_or_data(cache_key, line_stops, cache_ttl=3600*24)
 

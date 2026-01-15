@@ -83,7 +83,7 @@ def get_bus_router(
         return await bus_service.get_all_stops()
     
     @router.get("/lines/{line_id}/stops")
-    async def list_tram_stations_by_line(line_id: str):
+    async def list_bus_stations_by_line(line_id: str):
         return await bus_service.get_stops_by_line(line_id)
     
     @router.get("/stops/{stop_code}/routes")
