@@ -2,20 +2,21 @@ import asyncio
 from datetime import datetime
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram import Bot
-from application.api.server import create_app
+from src.presentation.api.server import create_app
 import uvicorn
 
-from ui import (
+from src.infrastructure.database.seeders.lines_seeder import seed_lines
+from src.presentation.bot import (
     MenuHandler, MetroHandler, BusHandler, TramHandler, FavoritesHandler, HelpHandler, 
     LanguageHandler, KeyboardFactory, WebAppHandler, RodaliesHandler, ReplyHandler, AdminHandler, SettingsHandler, BicingHandler, NotificationsHandler, FgcHandler
 )
-from application import MessageService, MetroService, BusService, TramService, RodaliesService, BicingService, CacheService, UpdateManager, TelegraphService, AlertsService, FgcService
-from providers.manager import SecretsManager, UserDataManager, LanguageManager
-from providers.api import TmbApiService, TramApiService, RodaliesApiService, BicingApiService, FgcApiService
-from providers.helpers import logger
-from providers.manager.firebase_client import initialize_firebase as initialize_firebase_app
+from src.application.services import MessageService, MetroService, BusService, TramService, RodaliesService, BicingService, CacheService, UpdateManager, TelegraphService, AlertsService, FgcService, SecretsManager, UserDataManager
+from src.infrastructure.localization.language_manager import LanguageManager
+from src.infrastructure.external import TmbApiService, TramApiService, RodaliesApiService, BicingApiService, FgcApiService
+from src.core.logger import logger
+from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
 
-from providers.database.database import init_db
+from src.infrastructure.database.database import init_db
 
 
 class BotApp:
@@ -270,7 +271,9 @@ class BotApp:
 
     async def run(self):
         """Main async entrypoint for the bot."""
-        await init_db()        
+        await init_db()
+        #await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+         
         await self.run_seeder()
         initialize_firebase_app()
 
@@ -324,7 +327,6 @@ async def start_bot_and_api():
     bot = BotApp()
     bot.init_services()
 
-    # Crear FastAPI pasando los services ya inicializados
     app = create_app(
         metro_service=bot.metro_service,
         bus_service=bot.bus_service,
@@ -335,7 +337,6 @@ async def start_bot_and_api():
         user_data_manager=bot.user_data_manager
     )
 
-    # Ejecutar ambos en paralelo
     await asyncio.gather(
         bot.run(),
         start_fastapi(app)
