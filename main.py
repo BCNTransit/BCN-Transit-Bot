@@ -190,15 +190,14 @@ class BotApp:
         service_times = []
 
         preload_tasks = [
-            ("Metro", self.metro_service, ["get_all_lines", "get_all_stations"]),
-            ("Bus", self.bus_service, ["get_all_lines", "get_all_stops"]),
-            ("Tram", self.tram_service, ["get_all_lines", "get_all_stops"]),
-            ("Rodalies", self.rodalies_service, ["get_all_lines", "get_all_stations"]),
-            ("FGC", self.fgc_service, ["get_all_lines", "get_all_stations"])
+            ("Metro", self.metro_service, ["get_all_stations"]),
+            ("Bus", self.bus_service, ["get_all_stops"]),
+            ("Tram", self.tram_service, ["get_all_stops"]),
+            ("Rodalies", self.rodalies_service, ["get_all_stations"]),
+            ("FGC", self.fgc_service, ["get_all_stations"])
         ]
 
         try:
-            # Ejecutamos cada servicio en paralelo
             async def run_service(name, service, methods):
                 start = datetime.now()
                 tasks = []
@@ -206,7 +205,6 @@ class BotApp:
                     method = getattr(service, method_name)
                     tasks.append(asyncio.create_task(method()))
                 
-                # Ejecutamos todos los métodos de este servicio concurrentemente
                 for task in asyncio.as_completed(tasks):
                     try:
                         await task
@@ -216,21 +214,16 @@ class BotApp:
                 elapsed = int((datetime.now() - start).total_seconds())
                 return name, elapsed
 
-            # Creamos tareas para todos los servicios
             all_tasks = [run_service(name, service, methods) for name, service, methods in preload_tasks]
             results = await asyncio.gather(*all_tasks)
-
-            # Guardamos los tiempos
             service_times.extend(results)
 
-            # Total elapsed
             total_elapsed = int((datetime.now() - total_start).total_seconds())
             total_minutes, total_seconds = divmod(total_elapsed, 60)
             logger.info(
                 f"Seeder completed in {total_minutes}m {total_seconds}s" if total_minutes > 0 else f"Seeder completed in {total_seconds}s"
             )
 
-            # Detailed per-service logs
             for name, elapsed in service_times:
                 minutes, seconds = divmod(elapsed, 60)
                 logger.info(
@@ -310,18 +303,15 @@ class BotApp:
         """Main async entrypoint for the bot."""
         await init_db()
         await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
-         
-        await self.run_seeder()
+        await self.run_seeder()         
         initialize_firebase_app()
 
-        # Telegram application
         self.application = ApplicationBuilder().token(self.telegram_token).build()
         self.register_handlers()
 
         logger.info("Starting Telegram polling loop...")
         
         try:
-            # Initialize and start the application
             await self.application.initialize()
             await self.application.start()
             await self.admin_handler.send_commit_to_admins_on_startup()
@@ -330,7 +320,6 @@ class BotApp:
             logger.info("Creando tarea recurrente...")
             await self.alerts_service.start()
 
-            # Keep the bot running
             logger.info("Bot is running. Press Ctrl+C to stop.")
             await asyncio.Event().wait()
             

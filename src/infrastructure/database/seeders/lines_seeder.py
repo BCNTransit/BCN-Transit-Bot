@@ -50,18 +50,22 @@ async def seed_lines(metro_service: MetroService, bus_service: BusService, tram_
     all_raw_lines = []
 
     try:
-        print("📥 Obteniendo datos de TMB (Metro/Bus)...")
-        metro_lines = await metro_service.get_all_lines()
-        bus_lines = await bus_service.get_all_lines()
-        tram_lines = await tram_service.get_all_lines()
-        rodalies_lines = await rodalies_service.get_all_lines()
-        fgc_lines = await fgc_service.get_all_lines()
-        
-        all_raw_lines.extend(metro_lines)
-        all_raw_lines.extend(bus_lines)
-        all_raw_lines.extend(tram_lines)
-        all_raw_lines.extend(rodalies_lines)
-        all_raw_lines.extend(fgc_lines)
+        results = await asyncio.gather(
+            metro_service.get_all_lines(),
+            bus_service.get_all_lines(),
+            tram_service.get_all_lines(),
+            rodalies_service.get_all_lines(),
+            fgc_service.get_all_lines(),
+            return_exceptions=True
+        )
+
+        services_names = ["Metro", "Bus", "Tram", "Rodalies", "FGC"]
+
+        for service_name, result in zip(services_names, results):
+            if isinstance(result, Exception):
+                print(f"⚠️ Error en {service_name}: {result}")
+            else:
+                all_raw_lines.extend(result)
 
     except Exception as e:
         print(f"❌ Error obteniendo datos de las APIs: {e}")
@@ -72,24 +76,28 @@ async def seed_lines(metro_service: MetroService, bus_service: BusService, tram_
     async with async_session_factory() as session:
         count = 0
         for raw in all_raw_lines:
-            final_color = resolve_color(raw.name, raw.transport_type, raw.color)
-            
+            db_id = f"{raw.transport_type.value}-{raw.id}"            
+            extra_data_dict = {}
+            if raw.category:
+                extra_data_dict["category"] = raw.category
+
             line_db = LineModel(
-                id=str(raw.id),
+                id=db_id,                
+                original_id=str(raw.id),                 
                 code=str(raw.code),
                 name=raw.name,
                 description=raw.description,
                 origin=raw.origin,
                 destination=raw.destination,
                 transport_type=raw.transport_type.value,
-                color=final_color
+                color=resolve_color(raw.name, raw.transport_type, raw.color),
+                extra_data=extra_data_dict or None
             )
 
             await session.merge(line_db)
             count += 1
         
         await session.commit()
-        print(f"✅ Éxito: {count} líneas guardadas/actualizadas en la base de datos.")
 
 if __name__ == "__main__":
     if sys.platform == 'win32':

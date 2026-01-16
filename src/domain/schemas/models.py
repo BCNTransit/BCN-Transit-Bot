@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger
+from sqlalchemy import JSON, Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -132,6 +132,7 @@ class LineModel(Base):
     __tablename__ = "lines"
 
     id = Column(String, primary_key=True, index=True)
+    original_id = Column(String, nullable=False, index=True)
     code = Column(String, nullable=False)
     name = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
@@ -140,3 +141,8 @@ class LineModel(Base):
     color = Column(String, nullable=False)
     
     transport_type = Column(String, nullable=False)
+    extra_data = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('original_id', 'transport_type', name='uq_original_id_transport'),
+    )

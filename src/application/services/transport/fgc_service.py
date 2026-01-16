@@ -64,9 +64,8 @@ class FgcService(ServiceBase):
         lines = await self.get_all_lines()
         stations = []
 
-        # Limita concurrencia: ajusta según capacidad de la API
-        semaphore_lines = asyncio.Semaphore(5)   # Para get_stations_by_line
-        semaphore_near = asyncio.Semaphore(10)   # Para get_near_stations
+        semaphore_lines = asyncio.Semaphore(5)
+        semaphore_near = asyncio.Semaphore(10)
 
         async def process_station(line_station, line):
             async with semaphore_near:
@@ -236,7 +235,7 @@ class FgcService(ServiceBase):
             return connections
         
         same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [LineMapper.map_fgc_line(s.line_id, s.line_code, s.line_name, s.line_description, s.line_color) for s in same_stops] # TODO FIX map_fgc_connection()
+        connections = [LineMapper.map_fgc_connection(s.line_id, s.line_code, s.line_name, s.line_description, s.line_color) for s in same_stops]
         await self.cache_service.set(f"fgc_station_connections_{station_code}", connections, ttl=3600*24)
 
         elapsed = (time.perf_counter() - start)

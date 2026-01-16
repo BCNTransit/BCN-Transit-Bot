@@ -70,7 +70,17 @@ class DistanceHelper:
         def within_bbox(lat, lon):
             if user_location is None:
                 return True
-            return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+            
+            if lat is None or lon is None:
+                return False
+
+            try:
+                lat_float = float(lat)
+                lon_float = float(lon)
+                
+                return min_lat <= lat_float <= max_lat and min_lon <= lon_float <= max_lon
+            except ValueError:
+                return False
 
         # --- Procesa todas las listas ---
         for m in metro_stations:

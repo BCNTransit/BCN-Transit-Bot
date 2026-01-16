@@ -359,19 +359,19 @@ class UserDataManager:
             fav_items = []
             for f in db_favs:
                 fav_items.append(FavoriteResponse(
-                    TYPE=f.transport_type,
-                    STATION_CODE=f.station_code,
-                    STATION_NAME=f.station_name,
-                    STATION_GROUP_CODE=f.station_group_code or "",
-                    LINE_NAME=f.line_name or "",
-                    LINE_NAME_WITH_EMOJI=f.line_name_with_emoji or "",
-                    LINE_CODE=f.line_code or "",
-                    coordinates=[f.latitude or 0, f.longitude or 0] # Revisa el orden aquí también
+                    type=f.transport_type,
+                    station_code=f.station_code,
+                    station_name=f.station_name,
+                    station_group_code=f.station_group_code or "",
+                    line_name=f.line_name or "",
+                    line_name_with_emoji=f.line_name_with_emoji or "",
+                    line_code=f.line_code or "",
+                    coordinates=[f.latitude or 0, f.longitude or 0]
                 ))
             
             return sorted(
                 fav_items,
-                key=lambda f: self.FAVORITE_TYPE_ORDER.get(f.TYPE, 999)
+                key=lambda f: self.FAVORITE_TYPE_ORDER.get(f.type, 999)
             )
 
     async def has_favorite(self, user_id, type, item_id) -> bool:

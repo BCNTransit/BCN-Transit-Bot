@@ -22,4 +22,4 @@ class BicingStation:
     obcn: str
 
     def __post_init__(self):
-        self.streetName = self.streetName.title()
+        self.streetName = self.streetName.title() if self.streetName is not None else ''

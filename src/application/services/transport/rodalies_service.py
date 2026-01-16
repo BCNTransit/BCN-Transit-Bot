@@ -15,6 +15,7 @@ from src.core.logger import logger
 
 
 from src.application.services.cache_service import CacheService
+from src.infrastructure.mappers.line_mapper import LineMapper
 from .service_base import ServiceBase
 
 
@@ -164,7 +165,7 @@ class RodaliesService(ServiceBase):
             return connections
         
         same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [Line.create_rodalies_connection(s.line_id, s.line_code, s.line_name, s.line_description, '', '', s.line_color) for s in same_stops]
+        connections = [LineMapper.map_rodalies_connection(s) for s in same_stops]
         await self.cache_service.set(f"rodalies_station_connections_{station_code}", connections, ttl=3600*24)
 
         elapsed = (time.perf_counter() - start)

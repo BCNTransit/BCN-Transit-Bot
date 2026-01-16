@@ -36,6 +36,19 @@ class LineMapper:
         )
     
     @staticmethod
+    def map_fgc_connection(id, code, name, description, color):
+        return Line(
+            id = id,
+            code = code,
+            name = name,
+            description = description,
+            origin = '',
+            destination = '',
+            color = color,
+            transport_type=TransportType.FGC
+        )
+    
+    @staticmethod
     def map_rodalies_line(data: Dict[str, Any], stations: List[RodaliesStation]) -> Line:
         return Line(
             id=str(data["id"]),
@@ -50,6 +63,20 @@ class LineMapper:
         )
     
     @staticmethod
+    def map_rodalies_connection(line: dict) -> Line:
+        return Line(
+            id=str(line.get('ID_LINIA', '')),
+            code=str(line.get('CODI_LINIA', '')),
+            name=str(line.get('NOM_LINIA', '')),
+            description=str(line.get('DESC_LINIA', '')),
+            transport_type=TransportType.RODALIES,
+            origin=line.get('DESC_LINIA').split("-")[0].strip() if line.get('DESC_LINIA') and "-" in line.get('DESC_LINIA') else '',
+            destination=line.get('DESC_LINIA').split("-")[1].strip() if line.get('DESC_LINIA') and "-" in line.get('DESC_LINIA') else '',
+            stations=[],
+            color=str(line.get('COLOR_LINIA', '')),
+        )
+    
+    @staticmethod
     def map_tram_line(props: Dict[str, Any]) -> Line:
         return Line(
             id=str(props.get('id', '')),
@@ -58,6 +85,19 @@ class LineMapper:
             description='TBD',
             origin='',
             destination='',
+            color="008E78",
+            transport_type=TransportType.TRAM
+        )
+    
+    @staticmethod
+    def map_tram_connection(id, code, name, description, origin, destination):
+        return Line(
+            id=id,
+            code=code,
+            name=name,
+            description=description,
+            origin=origin,
+            destination=destination,
             color="008E78",
             transport_type=TransportType.TRAM
         )

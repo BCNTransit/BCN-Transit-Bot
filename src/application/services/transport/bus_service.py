@@ -232,10 +232,8 @@ class BusService(ServiceBase):
         async def process_line(line: Line):
             async with semaphore_lines:
                 api_stops = await self.tmb_api_service.get_bus_line_stops(line.code)
-            # Crear tareas concurrentes para cada parada
             await asyncio.gather(*(process_stop(stop, line) for stop in api_stops))
 
-        # Crear tareas para cada línea
         await asyncio.gather(*(process_line(line) for line in lines))
 
         await self.cache_service.set("bus_stops_static", stops, ttl=3600 * 24)
