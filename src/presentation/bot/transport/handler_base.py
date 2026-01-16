@@ -3,11 +3,14 @@ from collections import defaultdict
 import time
 from typing import Awaitable, Callable, List
 from src.domain.models.common.alert import Alert
-from src.domain.enums import TransportType
+from src.domain.enums.transport_type import TransportType
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import RetryAfter
-from src.application.services import MessageService, UpdateManager, TelegraphService, UserDataManager, audit_action
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.message_service import MessageService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.user_data_manager import UserDataManager, audit_action
 from src.infrastructure.localization.language_manager import LanguageManager
 from src.core.logger import logger
 

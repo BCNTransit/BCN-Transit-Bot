@@ -1,10 +1,11 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from src.application.services.message_service import MessageService
 from src.presentation.bot.keyboard_factory import KeyboardFactory
-from src.domain.enums import ClientType
+from src.domain.enums.clients import ClientType
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.application.services import UserDataManager, MessageService
+from src.application.services.user_data_manager import UserDataManager
 
 class NotificationsHandler:
 

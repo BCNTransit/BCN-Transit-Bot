@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.domain.enums import TransportType
+from src.domain.enums.transport_type import TransportType
 from src.domain.models.common.station import Station
 from src.domain.models.common.line import Line
 

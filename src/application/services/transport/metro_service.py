@@ -5,9 +5,15 @@ from typing import List
 import time
 
 from src.application.utils.utils import Utils
-from src.domain.models import LineRoute, Alert, Connections, Line, Station, MetroLine, MetroStation, MetroAccess
+from src.domain.models.metro.metro_station import MetroStation
+from src.domain.models.metro.metro_access import MetroAccess
+from src.domain.models.common.alert import Alert
+from src.domain.models.common.station import Station
+from src.domain.models.common.line import Line
+from src.domain.models.common.line_route import LineRoute
+from src.domain.models.common.connections import Connections
 from src.domain.enums.transport_type import TransportType
-from src.application.services import UserDataManager
+from src.application.services.user_data_manager import UserDataManager
 from src.infrastructure.localization.language_manager import LanguageManager
 from src.infrastructure.external.api.tmb_api_service import TmbApiService
 
@@ -30,7 +36,7 @@ class MetroService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] MetroService initialized")
 
     # ===== CACHE CALLS ====
-    async def get_all_lines(self) -> List[MetroLine]:
+    async def get_all_lines(self) -> List[Line]:
         start = time.perf_counter()
         static_key = "metro_lines_static"
         alerts_key = "metro_lines_alerts"
@@ -202,7 +208,7 @@ class MetroService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] get_station_by_id({station_code}) -> {station} ({elapsed:.4f} s)")
         return station
 
-    async def get_line_by_code(self, line_code) -> MetroLine:
+    async def get_line_by_code(self, line_code) -> Line:
         start = time.perf_counter()
         lines = await self.get_all_lines()
         line = next((l for l in lines if str(l.code) == str(line_code)), None)

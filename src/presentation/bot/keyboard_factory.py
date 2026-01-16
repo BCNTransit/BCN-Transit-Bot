@@ -2,13 +2,20 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from typing import List
 
+from src.domain.models.common.line import Line
 from src.domain.schemas.favorite import FavoriteResponse as FavoriteItem
-from src.domain.models import FgcLine, FgcStation, RodaliesLine, TramLine, TramStation, BusLine, MetroLine, MetroStation, MetroAccess
-from src.domain.enums import Callbacks, TransportType
+from src.domain.models.metro.metro_station import MetroStation
+from src.domain.models.metro.metro_access import MetroAccess
+from src.domain.models.fgc.fgc_station import FgcStation
+from src.domain.models.common.line import Line
+from src.domain.models.tram.tram_station import TramStation
+from src.domain.enums.callbacks import Callbacks
+from src.domain.enums.transport_type import TransportType
 
 from src.application.utils.utils import Utils
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.application.utils import DistanceHelper, GoogleMapsHelper
+from src.application.utils.distance_helper import DistanceHelper
+from src.application.utils.google_maps_helper import GoogleMapsHelper
 
 class KeyboardFactory:
 
@@ -77,7 +84,7 @@ class KeyboardFactory:
     
     # === LINES ===
     
-    def metro_lines_menu(self, metro_lines: List[MetroLine]) -> InlineKeyboardMarkup:
+    def metro_lines_menu(self, metro_lines: List[Line]) -> InlineKeyboardMarkup:
         sorted_lines = sorted(metro_lines, key=Utils.sort_lines)
         buttons = [
             InlineKeyboardButton(f"{line.name_with_emoji} {'⚠️' if line.has_alerts else ''}  ", callback_data=Callbacks.METRO_LINE.format(line_code=line.code, line_name=line.name))
@@ -103,7 +110,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(keyboard, 2)
         return InlineKeyboardMarkup(rows)
     
-    def bus_lines_menu(self, bus_lines: List[BusLine]):
+    def bus_lines_menu(self, bus_lines: List[Line]):
         buttons = [
             InlineKeyboardButton(f"{line.name} {'⚠️' if line.has_alerts else ''}  ", callback_data=Callbacks.BUS_LINE.format(line_code=line.code, line_name=line.name))
             for line in bus_lines
@@ -112,7 +119,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(buttons, 3)
         return InlineKeyboardMarkup(rows)
     
-    def tram_lines_menu(self, tram_lines: List[TramLine]) -> InlineKeyboardMarkup:
+    def tram_lines_menu(self, tram_lines: List[Line]) -> InlineKeyboardMarkup:
         buttons = [
             InlineKeyboardButton(f"{line.name_with_emoji} {'⚠️' if line.has_alerts else ''}  ", callback_data=Callbacks.TRAM_LINE.format(line_code=line.id, line_name=line.name))
             for line in tram_lines
@@ -120,7 +127,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(buttons, 3)
         return InlineKeyboardMarkup(rows)
     
-    def rodalies_lines_menu(self, rodalies_lines: List[RodaliesLine])-> InlineKeyboardMarkup:
+    def rodalies_lines_menu(self, rodalies_lines: List[Line])-> InlineKeyboardMarkup:
         buttons = [
             InlineKeyboardButton(f" {'⚠️ ' if line.has_alerts else ''}{line.name_with_emoji}  ", callback_data=Callbacks.RODALIES_LINE.format(line_code=line.id))
             for line in rodalies_lines
@@ -128,7 +135,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(buttons, 3)
         return InlineKeyboardMarkup(rows)
     
-    def fgc_lines_menu(self, fgc_lines: List[FgcLine])-> InlineKeyboardMarkup:
+    def fgc_lines_menu(self, fgc_lines: List[Line])-> InlineKeyboardMarkup:
         buttons = [
             InlineKeyboardButton(f" {'⚠️ ' if line.has_alerts else ''}{line.name_with_emoji}  ", callback_data=Callbacks.FGC_LINE.format(line_code=line.id, line_name=line.name))
             for line in fgc_lines

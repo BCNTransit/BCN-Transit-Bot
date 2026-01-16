@@ -8,7 +8,10 @@ from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
 
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
-from src.domain.models import LineRoute, RodaliesLine, RodaliesStation
+from src.domain.models.rodalies.rodalies_station import RodaliesStation
+from src.domain.models.common.line import Line
+from src.domain.models.common.line_route import LineRoute
+from src.infrastructure.mappers.line_mapper import LineMapper
 
 
 class RodaliesApiService:
@@ -53,11 +56,11 @@ class RodaliesApiService:
                     RodaliesStation.create_rodalies_station(station_data)
                     for station_data in line_data["stations"]
                 )
-                lines.append(RodaliesLine.create_rodalies_line(line_data, stations))
+                lines.append(LineMapper.map_rodalies_line(line_data, stations))
 
         return lines
 
-    async def get_line_by_id(self, line_id: int) -> RodaliesLine:
+    async def get_line_by_id(self, line_id: int) -> Line:
         """Fetch a single Rodalies line by ID."""
         line_data = await self._request("GET", f"/lines/{line_id}")
         stations = []
@@ -65,7 +68,7 @@ class RodaliesApiService:
             RodaliesStation.create_rodalies_station(station_data)
             for station_data in line_data["stations"]
         )
-        return RodaliesLine.create_rodalies_line(line_data, stations)
+        return Line.create_rodalies_line(line_data, stations)
 
     async def get_global_alerts(self):
         alerts = await self._request("GET", "/notices?limit=500&sort=date,desc&sort=time,desc")

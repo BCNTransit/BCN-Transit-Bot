@@ -1,7 +1,7 @@
 from typing import List
-from src.domain.models.common.line_model import Line 
+from src.domain.models.common.line import Line 
 from src.infrastructure.database.repositories.line_repository import LineRepository
-from src.domain.enums import TransportType
+from src.domain.enums.transport_type import TransportType
 
 class LineService:
     def __init__(self, repository: LineRepository):

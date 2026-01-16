@@ -9,7 +9,8 @@ from functools import wraps
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.database import async_session_factory
-from src.domain.enums import ClientType, TransportType
+from src.domain.enums.clients import ClientType
+from src.domain.enums.transport_type import TransportType
 from src.domain.models.common.user import User
 from src.domain.models.common.alert import Alert, AffectedEntity, Publication
 

@@ -22,7 +22,7 @@ async def get_current_user_uid(credentials: HTTPAuthorizationCredentials = Depen
         decoded_token = auth.verify_id_token(token)
         return decoded_token.get('uid') or decoded_token.get('sub') or decoded_token.get('user_id')
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid Token")
+        raise HTTPException(status_code=401, detail="Token inválido")
     
 async def get_api_key(api_key_header: str = Security(api_key_header)):
     if api_key_header == SERVER_API_KEY:

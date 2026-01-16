@@ -1,12 +1,18 @@
-from src.domain.models import LineRoute
-from src.domain.enums import TransportType
+from src.domain.models.common.line_route import LineRoute
+from src.domain.enums.transport_type import TransportType
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.application.services import RodaliesService, MessageService, UpdateManager, TelegraphService, UserDataManager, audit_action
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.transport.rodalies_service import RodaliesService
+from src.application.services.message_service import MessageService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.user_data_manager import UserDataManager, audit_action
+from src.presentation.bot.keyboard_factory import KeyboardFactory
 
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.application.utils import TransportDataCompressor, GoogleMapsHelper
+from src.application.utils.transport_data_compressor import TransportDataCompressor
+from src.application.utils.google_maps_helper import GoogleMapsHelper
 from src.core.logger import logger
 
 from src.presentation.bot.keyboard_factory import KeyboardFactory

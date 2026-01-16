@@ -1,13 +1,13 @@
 import math
 import time
 from typing import List, Optional, Tuple, Dict
-from src.domain.models.bus import BusStop
+from src.domain.models.bus.bus_stop import BusStop
 from src.domain.models.common.location import Location
-from src.domain.models.metro import MetroStation
-from src.domain.models.tram import TramStation
-from src.domain.models.rodalies import RodaliesStation
-from src.domain.models.bicing import BicingStation
-from src.domain.models.fgc import FgcStation
+from src.domain.models.metro.metro_station import MetroStation
+from src.domain.models.tram.tram_station import TramStation
+from src.domain.models.rodalies.rodalies_station import RodaliesStation
+from src.domain.models.bicing.bicing_station import BicingStation
+from src.domain.models.fgc.fgc_station import FgcStation
 from src.core.logger import logger
 
 class DistanceHelper:

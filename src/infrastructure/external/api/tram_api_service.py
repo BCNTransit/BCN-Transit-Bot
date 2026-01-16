@@ -5,12 +5,15 @@ import inspect
 from datetime import datetime
 from typing import Any, Dict, List
 
-from src.domain.models.tram import TramLine, TramStation, TramConnection, TramStationConnection
+from src.domain.models.tram.tram_station import TramStation
+from src.domain.models.tram.tram_connection import TramConnection, TramStationConnection
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
-from src.domain.models import LineRoute
+from src.domain.models.common.line import Line
+from src.domain.models.common.line_route import LineRoute
 
 from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
+from src.infrastructure.mappers.line_mapper import LineMapper
 
 
 
@@ -102,7 +105,7 @@ class TramApiService:
         page: int = 1,
         page_size: int = 100,
         sort: str = ""
-    ) -> List[TramLine]:
+    ) -> List[Line]:
         params: Dict[str, Any] = {
             "name": name,
             "description": description,
@@ -117,11 +120,11 @@ class TramApiService:
 
         lines = await self._request("GET", "/lines", params=params)
 
-        tram_lines: List[TramLine] = [TramLine.create_tram_line(line) for line in lines]
+        tram_lines: List[Line] = [LineMapper.map_tram_line(line) for line in lines]
 
         return tram_lines
 
-    async def get_line_by_id(self, line_id: int) -> TramLine:
+    async def get_line_by_id(self, line_id: int) -> Line:
         return await self._request("GET", f"/lines/{line_id}")
 
     async def get_stops_on_line(

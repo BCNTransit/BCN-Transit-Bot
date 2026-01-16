@@ -1,9 +1,9 @@
 import json
-from src.domain.enums import TransportType
+from src.domain.enums.transport_type import TransportType
 from telegram import Update
 from telegram.ext import ContextTypes
 from src.core.logger import logger
-from src.application.services import audit_action
+from src.application.services.user_data_manager import audit_action
 
 from src.presentation.bot.transport.metro_handler import MetroHandler
 from src.presentation.bot.transport.bus_handler import BusHandler

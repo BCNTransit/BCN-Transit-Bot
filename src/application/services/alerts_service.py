@@ -8,15 +8,15 @@ import os
 from telegram import Bot
 from telegram.error import TelegramError
 
-from src.domain.enums import ClientType
+from src.domain.enums.clients import ClientType
 from src.domain.models.common.alert import Alert
-from src.application.services import UserDataManager
+from src.application.services.user_data_manager import UserDataManager
 from firebase_admin import messaging
 
 from src.core.logger import logger
 
 if TYPE_CHECKING:
-    from src.application.services import MessageService
+    from src.application.services.message_service import MessageService
 
 class AlertsService:
     def __init__(self, bot: Bot, message_service: MessageService, user_data_manager: UserDataManager, interval: int = 300):

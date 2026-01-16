@@ -4,8 +4,8 @@ from typing import List
 
 from src.domain.models.common.connections import Connections
 from src.domain.models.common.line import Line
-from src.domain.models.fgc import FgcLine, FgcStation
-from src.domain.models import LineRoute
+from src.domain.models.fgc.fgc_station import FgcStation
+from src.domain.models.common.line_route import LineRoute
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
 from src.infrastructure.external.api.fgc_api_service import FgcApiService
 from src.infrastructure.localization.language_manager import LanguageManager
@@ -15,6 +15,7 @@ from src.core.logger import logger
 from src.application.services.cache_service import CacheService
 from src.application.services.user_data_manager import UserDataManager
 from src.domain.enums.transport_type import TransportType
+from src.infrastructure.mappers.line_mapper import LineMapper
 from .service_base import ServiceBase
 
 
@@ -37,7 +38,7 @@ class FgcService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] FgcService initialized")
 
     # ===== CACHE CALLS ====
-    async def get_all_lines(self) -> List[FgcLine]:
+    async def get_all_lines(self) -> List[Line]:
         start = time.perf_counter()
         result = await self._get_from_cache_or_api(
             "fgc_lines",
@@ -215,7 +216,7 @@ class FgcService(ServiceBase):
         )
         return station
 
-    async def get_line_by_id(self, line_id) -> FgcLine:
+    async def get_line_by_id(self, line_id) -> Line:
         start = time.perf_counter()
         lines = await self.get_all_lines()
         line = next((l for l in lines if str(l.id) == str(line_id)), None)
@@ -235,7 +236,7 @@ class FgcService(ServiceBase):
             return connections
         
         same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [FgcLine.create_fgc_connection(s.line_id, s.line_code, s.line_name, s.line_description, s.line_color) for s in same_stops]
+        connections = [LineMapper.map_fgc_line(s.line_id, s.line_code, s.line_name, s.line_description, s.line_color) for s in same_stops] # TODO FIX map_fgc_connection()
         await self.cache_service.set(f"fgc_station_connections_{station_code}", connections, ttl=3600*24)
 
         elapsed = (time.perf_counter() - start)

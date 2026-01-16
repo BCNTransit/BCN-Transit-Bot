@@ -3,9 +3,13 @@ import time
 from collections import defaultdict
 from typing import List
 
-from src.domain.models import LineRoute, Alert, Connections, TramLine, TramStation
+from src.domain.models.tram.tram_station import TramStation
+from src.domain.models.common.alert import Alert
+from src.domain.models.common.line_route import LineRoute
+from src.domain.models.common.connections import Connections
+from src.domain.models.common.line import Line
 from src.domain.enums.transport_type import TransportType
-from src.application.services import UserDataManager
+from src.application.services.user_data_manager import UserDataManager
 from src.infrastructure.localization.language_manager import LanguageManager
 from src.infrastructure.external.api.tram_api_service import TramApiService
 
@@ -36,7 +40,7 @@ class TramService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] TramService initialized (tiempo: {elapsed:.4f} s)")
 
     # === CACHE CALLS ===
-    async def get_all_lines(self) -> List[TramLine]:
+    async def get_all_lines(self) -> List[Line]:
         start = time.perf_counter()
 
         static_key = "tram_lines_static"
@@ -169,7 +173,7 @@ class TramService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] get_stops_by_name({stop_name}) -> {len(result)} stops (tiempo: {elapsed:.4f} s)")
         return result
 
-    async def get_line_by_id(self, line_id) -> TramLine:
+    async def get_line_by_id(self, line_id) -> Line:
         start = time.perf_counter()
         lines = await self.get_all_lines()
         line = next((l for l in lines if str(l.code) == str(line_id)), None)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
+from src.domain.models.common.line import Line
 from src.domain.models.common.station import Station
-from src.domain.models.fgc.fgc_line import FgcLine
 from src.domain.enums.transport_type import TransportType
 
 @dataclass
@@ -24,7 +24,7 @@ class FgcStation(Station):
         )
     
     @staticmethod
-    def update_line_info(fgc_station: Station, line: FgcLine):
+    def update_line_info(fgc_station: Station, line: Line):
         fgc_station.line_description = line.description
         fgc_station.line_name_with_emoji = line.name_with_emoji
         fgc_station.line_color = line.color

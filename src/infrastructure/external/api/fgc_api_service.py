@@ -9,11 +9,14 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from src.domain.models import FgcLine, FgcStation
+from src.domain.models.common.line import Line
+from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
 
 from google.transit import gtfs_realtime_pb2
+
+from src.infrastructure.mappers.line_mapper import LineMapper
 
 
 class FgcApiService:
@@ -67,9 +70,9 @@ class FgcApiService:
                 else:
                     return await resp.json()
     
-    async def get_all_lines(self) -> List[FgcLine]: 
+    async def get_all_lines(self) -> List[Line]: 
         data = await self._request("GET", "/lineas-red-fgc/records?limit=100", params=None)
-        lines = [FgcLine.create_fgc_line(l) for l in data['results'] if l['route_id'] != "L1"] # Excluir Cremallera de Nuria
+        lines = [LineMapper.map_fgc_line(l) for l in data['results'] if l['route_id'] != "L1"] # Excluir Cremallera de Nuria
         lines.sort(key= lambda x: x.id)
         return lines
     
@@ -208,14 +211,11 @@ class FgcApiService:
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"{datetime.now(tz=madrid_tz).strftime('%Y-%m-%d %H:%M:%S')} - {msg}\n")
 
-        # Resetear log
         with open(log_file, "w", encoding="utf-8") as f:
             f.write("=== Nueva ejecución ===\n")
 
-        # Cargar CSVs
         await self._load_csvs()
 
-        # 1️⃣ Buscar estación
         stop = self._stops[self._stops["stop_name"].str.lower() == station_name.lower()]
         if stop.empty:
             log(f"No se encontró la estación {station_name}")
@@ -223,7 +223,6 @@ class FgcApiService:
         stop_id = stop.iloc[0]["stop_id"]
         log(f"STOP ({stop_id}):\n{stop}")
 
-        # 2️⃣ Buscar línea
         route = self._routes[self._routes["route_short_name"] == line_name]
         if route.empty:
             log(f"No se encontró la línea {line_name}")
@@ -231,7 +230,6 @@ class FgcApiService:
         route_id = route.iloc[0]["route_id"]
         log(f"ROUTE ({route_id}):\n{route}")
 
-        # 3️⃣ Obtener todos los trip_id de esta línea
         trip_ids = set(self._trips[self._trips["route_id"] == route_id]["trip_id"])
         log(f"TRIPS_IDS for '{route_id}':\n{trip_ids}")
 
@@ -239,7 +237,6 @@ class FgcApiService:
         now_ts = time.time()
         seen_departures = set()  # (trip_instance_id, direction_id)
 
-        # 4️⃣ Procesar feed RT
         try:
             data = await self._request("GET", self.GTFS_RT_URL, use_FGC_BASE_URL=False, raw=True)
             feed = gtfs_realtime_pb2.FeedMessage()
@@ -263,7 +260,6 @@ class FgcApiService:
                 if not stop_time_updates:
                     continue
 
-                # Última parada para nombre de dirección
                 last_stop_id = stop_time_updates[-1].stop_id
                 last_stop_row = self._stops[self._stops["stop_id"] == last_stop_id]
                 direction_name = f"dir_{direction_id}" if last_stop_row.empty else last_stop_row.iloc[0]["stop_name"]
@@ -294,23 +290,20 @@ class FgcApiService:
                     if len(departures_by_direction[direction_name]) >= max_results:
                         break
 
-        # 5️⃣ Procesar planificados (100% vectorizado y robusto)
         stop_times_for_stop = self._stop_times[
             (self._stop_times["stop_id"] == stop_id) &
             (self._stop_times["trip_id"].isin(trip_ids - rt_trip_ids))
         ].copy()
 
-        # Si no hay datos, devolvemos lo que tengamos
         if stop_times_for_stop.empty:
             log(f"No hay salidas planificadas para {station_name}")
             return departures_by_direction
 
-        # Vectorizamos el cálculo de departure_ts
         def to_timestamp(dep_time: str) -> float:
             try:
                 h, m, s = map(int, dep_time.split(":"))
             except ValueError:
-                return float("inf")  # Si hay datos corruptos, los descartamos
+                return float("inf")
             extra_days = h // 24
             h %= 24
             ts = datetime.now(tz=madrid_tz).replace(hour=h, minute=m, second=s, microsecond=0).timestamp()
@@ -319,23 +312,19 @@ class FgcApiService:
         stop_times_for_stop["departure_ts"] = stop_times_for_stop["departure_time"].map(to_timestamp)
         stop_times_for_stop = stop_times_for_stop[stop_times_for_stop["departure_ts"] >= now_ts]
 
-        # Si no hay salidas futuras, devolvemos lo que tengamos
         if stop_times_for_stop.empty:
             return departures_by_direction
 
-        # Si falta la columna direction_id, la creamos
         trips_df = self._trips.copy()
         if "direction_id" not in trips_df.columns:
             trips_df["direction_id"] = 0
 
-        # Merge para añadir direction_id
         stop_times_for_stop = stop_times_for_stop.merge(
             trips_df[["trip_id", "direction_id"]],
             on="trip_id",
             how="left"
         )
 
-        # Calcular última parada de cada trip, renombrando explícitamente la columna
         last_stops = (
             self._stop_times
             .sort_values("stop_sequence")
@@ -345,7 +334,6 @@ class FgcApiService:
         )
         stop_times_for_stop = stop_times_for_stop.merge(last_stops, on="trip_id", how="left")
 
-        # Merge con stops usando last_stop_id
         stop_times_for_stop = stop_times_for_stop.merge(
             self._stops[["stop_id", "stop_name"]],
             left_on="last_stop_id",
@@ -353,19 +341,14 @@ class FgcApiService:
             how="left"
         )
 
-        # Crear trip_instance_id vectorizado
         stop_times_for_stop["trip_instance_id"] = stop_times_for_stop["trip_id"].str.split("|").str[1]
-
-        # Crear direction_name con fallback
         stop_times_for_stop["direction_name"] = stop_times_for_stop.apply(
             lambda r: r["stop_name"] if pd.notna(r["stop_name"]) else f"dir_{r['direction_id']}",
             axis=1
         )
 
-        # Eliminar duplicados usando trip_instance_id + direction_name
         stop_times_for_stop = stop_times_for_stop.drop_duplicates(subset=["trip_instance_id", "direction_name"])
 
-        # Agrupar por dirección y coger los max_results primeros
         departures_by_direction_df = (
             stop_times_for_stop
             .sort_values("departure_ts")
@@ -374,7 +357,6 @@ class FgcApiService:
             [["direction_name", "trip_id", "departure_ts"]]
         )
 
-        # Convertir DataFrame a diccionario final
         for direction_name, group in departures_by_direction_df.groupby("direction_name"):
             departures_by_direction.setdefault(direction_name, []).extend([
                 {
@@ -385,11 +367,9 @@ class FgcApiService:
                 for row in group.itertuples()
             ])
 
-        # Ordenar cada lista de salidas por departure_time
         for direction, trips in departures_by_direction.items():
             trips.sort(key=lambda x: x["departure_time"])
 
-        # Ordenar las claves del dict alfabéticamente
         departures_by_direction = dict(sorted(departures_by_direction.items(), key=lambda x: x[0]))
 
         log(f"Salidas agrupadas por dirección para {station_name} ({line_name}): {departures_by_direction}")

@@ -1,22 +1,59 @@
 import asyncio
 from datetime import datetime
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from telegram import Bot
-from src.presentation.api.server import create_app
+
 import uvicorn
-
-from src.infrastructure.database.seeders.lines_seeder import seed_lines
-from src.presentation.bot import (
-    MenuHandler, MetroHandler, BusHandler, TramHandler, FavoritesHandler, HelpHandler, 
-    LanguageHandler, KeyboardFactory, WebAppHandler, RodaliesHandler, ReplyHandler, AdminHandler, SettingsHandler, BicingHandler, NotificationsHandler, FgcHandler
+from telegram import Bot
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, 
+    MessageHandler, filters
 )
-from src.application.services import MessageService, MetroService, BusService, TramService, RodaliesService, BicingService, CacheService, UpdateManager, TelegraphService, AlertsService, FgcService, SecretsManager, UserDataManager
-from src.infrastructure.localization.language_manager import LanguageManager
-from src.infrastructure.external import TmbApiService, TramApiService, RodaliesApiService, BicingApiService, FgcApiService
-from src.core.logger import logger
-from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
 
+from src.core.logger import logger
+
+from src.presentation.api.server import create_app
+
+from src.presentation.bot.menu_handler import MenuHandler
+from src.presentation.bot.transport.metro_handler import MetroHandler
+from src.presentation.bot.transport.bus_handler import BusHandler
+from src.presentation.bot.transport.tram_handler import TramHandler
+from src.presentation.bot.favorites_handler import FavoritesHandler
+from src.presentation.bot.settings.help_handler import HelpHandler
+from src.presentation.bot.settings.language_handler import LanguageHandler
+from src.presentation.bot.transport.web_app_handler import WebAppHandler
+from src.presentation.bot.transport.rodalies_handler import RodaliesHandler
+from src.presentation.bot.reply_handler import ReplyHandler
+from src.presentation.bot.admin_handler import AdminHandler
+from src.presentation.bot.settings.settings_handler import SettingsHandler
+from src.presentation.bot.transport.bicing_handler import BicingHandler
+from src.presentation.bot.settings.notifications_handler import NotificationsHandler
+from src.presentation.bot.transport.fgc_handler import FgcHandler
+from src.presentation.bot.keyboard_factory import KeyboardFactory 
+
+from src.application.services.transport.metro_service import MetroService
+from src.application.services.transport.bus_service import BusService
+from src.application.services.transport.tram_service import TramService
+from src.application.services.transport.rodalies_service import RodaliesService
+from src.application.services.transport.bicing_service import BicingService
+from src.application.services.transport.fgc_service import FgcService
+
+from src.application.services.message_service import MessageService
+from src.application.services.cache_service import CacheService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.alerts_service import AlertsService
+from src.application.services.secrets_manager import SecretsManager
+from src.application.services.user_data_manager import UserDataManager
+
+from src.infrastructure.external.api.tmb_api_service import TmbApiService
+from src.infrastructure.external.api.tram_api_service import TramApiService
+from src.infrastructure.external.api.rodalies_api_service import RodaliesApiService
+from src.infrastructure.external.api.bicing_api_service import BicingApiService
+from src.infrastructure.external.api.fgc_api_service import FgcApiService
+
+from src.infrastructure.localization.language_manager import LanguageManager
 from src.infrastructure.database.database import init_db
+from src.infrastructure.database.seeders.lines_seeder import seed_lines
+from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
 
 
 class BotApp:
@@ -272,7 +309,7 @@ class BotApp:
     async def run(self):
         """Main async entrypoint for the bot."""
         await init_db()
-        #await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
          
         await self.run_seeder()
         initialize_firebase_app()
@@ -338,7 +375,7 @@ async def start_bot_and_api():
     )
 
     await asyncio.gather(
-        bot.run(),
+        #bot.run(),
         start_fastapi(app)
     )
 

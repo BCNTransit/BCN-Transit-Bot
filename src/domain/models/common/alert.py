@@ -1,11 +1,9 @@
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List
 import html
 
-from src.domain.enums import TransportType
-from src.application.utils.html_helper import HtmlHelper
+from src.domain.enums.transport_type import TransportType
 
 @dataclass
 class Publication:
@@ -39,6 +37,7 @@ class Alert:
     affected_entities: List[AffectedEntity]
 
     def _get_alert_content(self):
+        # ... tu lógica actual (sin cambios) ...
         title = self.publications[0].headerEs if self.publications and self.publications[0].headerEs else ""
         description = self.publications[0].textEs if self.publications and self.publications[0].textEs else "Sin descripción"
         description = html.escape(description)
@@ -51,27 +50,21 @@ class Alert:
 
         lineas = sorted({e.line_name for e in self.affected_entities if e.line_name})
         lineas_str = ", ".join(lineas) if lineas else "Varias líneas"
-
-        status_emojis = {
-            "ACTIVE": "🚨",
-            "INACTIVE": "✅",
-            "RESOLVED": "✅",
-            "PLANNED": "📅"
-        }
+        
+        # ... resto de tu lógica de emojis ...
+        status_emojis = {"ACTIVE": "🚨", "INACTIVE": "✅", "RESOLVED": "✅", "PLANNED": "📅"}
         status_emoji = status_emojis.get(self.status.upper(), "ℹ️")
 
         cause_map = {
-            "TECHNICAL": "⚙️ Problemas técnicos",
-            "ACCIDENT": "🚑 Accidente",
-            "WORKS": "🚧 Obras",
-            "EVENT": "🎉 Evento",
-            "OTHER": "ℹ️ Otros"
+            "TECHNICAL": "⚙️ Problemas técnicos", "ACCIDENT": "🚑 Accidente",
+            "WORKS": "🚧 Obras", "EVENT": "🎉 Evento", "OTHER": "ℹ️ Otros"
         }
         cause_str = cause_map.get(self.cause.upper(), self.cause)
 
         return title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description
 
     def format_app_alert(self):
+        # ... sin cambios ...
         title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()
         return (
             f"🚇 Líneas: {lineas_str}\n"
@@ -80,8 +73,8 @@ class Alert:
         )
 
     def format_html_alert(self):
+        # ... sin cambios ...
         title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()
-
         return (
             f"🚨 <b>NUEVA ALERTA</b> 🚨\n\n"
             f"<u>{title}:</u>\n\n"
@@ -93,26 +86,26 @@ class Alert:
             f"📝 <b>Info:</b>\n<i>{description}</i>"
         )
 
+    # --- MÉTODOS ESTÁTICOS (AQUÍ ESTÁ EL CAMBIO) ---
+
     @staticmethod
     def map_from_metro_alert(metro_alert):
+        # ✅ Importación local para evitar ciclo
+        from src.application.utils.html_helper import HtmlHelper 
+
         publications = []
         publications.extend(
             Publication(
                 headerCa=metro_alert_publication.get('headerCa', None),
                 headerEn=metro_alert_publication.get('headerEn', None),
                 headerEs=metro_alert_publication.get('headerEs', None),
-                textCa=HtmlHelper.clean_text(
-                    metro_alert_publication.get('textCa', '')
-                ),
-                textEn=HtmlHelper.clean_text(
-                    metro_alert_publication.get('textEn', '')
-                ),
-                textEs=HtmlHelper.clean_text(
-                    metro_alert_publication.get('textEs', '')
-                ),
+                textCa=HtmlHelper.clean_text(metro_alert_publication.get('textCa', '')),
+                textEn=HtmlHelper.clean_text(metro_alert_publication.get('textEn', '')),
+                textEs=HtmlHelper.clean_text(metro_alert_publication.get('textEs', '')),
             )
             for metro_alert_publication in metro_alert.get('publications')
         )
+        # ... resto del método igual ...
         affected_entities = []
         affected_entities.extend(
             AffectedEntity(
@@ -137,11 +130,13 @@ class Alert:
             status=metro_alert.get('effect').get('status'),
             cause=metro_alert.get('cause').get('code')
         )
-    
+
     @staticmethod
     def map_from_bus_alert(bus_alert):
-        channel_info = bus_alert.get('channelInfoTO')
+        # ✅ Importación local
+        from src.application.utils.html_helper import HtmlHelper
 
+        channel_info = bus_alert.get('channelInfoTO')
         publications = [Publication(
                 headerCa=HtmlHelper.clean_text(bus_alert.get('typeName', '')),
                 headerEn=HtmlHelper.clean_text(bus_alert.get('typeName', '')),
@@ -150,7 +145,8 @@ class Alert:
                 textEn=HtmlHelper.clean_text(channel_info.get('textEn', '')),
                 textEs=HtmlHelper.clean_text(channel_info.get('textEs', '')),
             )]
-
+        
+        # ... resto del método igual ...
         affected_entities = []
         for entity in bus_alert.get('linesAffected'):
             ways = entity.get('ways')
@@ -178,9 +174,12 @@ class Alert:
             status=HtmlHelper.clean_text(bus_alert.get('causeName')),
             cause=bus_alert.get('categories').get('messageType')
         )
-    
+
     @staticmethod
     def map_from_rodalies_alert(rodalies_alert):
+        # ✅ Importación local
+        from src.application.utils.html_helper import HtmlHelper
+
         title = rodalies_alert.get('title')
         description = rodalies_alert.get('description')
         publications = [
@@ -193,6 +192,7 @@ class Alert:
                 textEs=HtmlHelper.clean_text(description.get('es', '')),
             )
         ]
+        # ... resto del método igual ...
         affected_entities = []
         affected_entities.extend(
             AffectedEntity(
@@ -217,9 +217,11 @@ class Alert:
             status=None,
             cause=None
         )
-    
+
     @staticmethod
     def map_from_tram_alert(tram_alert):
+        from src.application.utils.html_helper import HtmlHelper
+
         alert_content = tram_alert.get('alert', {})
         title = alert_content.get('header_text').get('translation', {})
         description = alert_content.get('description_text').get('translation', {})
@@ -233,7 +235,6 @@ class Alert:
                 textEs=HtmlHelper.clean_text(next((item["text"] for item in description if item["language"] == "es"), '')),
             )
         ]
-
         affected_entities = []
         affected_entities.extend(
             AffectedEntity(

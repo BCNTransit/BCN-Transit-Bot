@@ -1,12 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from src.domain.enums.transport_type import TransportType
 from src.domain.models.common.station import Station
-
-if TYPE_CHECKING:
-    from src.domain.models.bus.bus_line import BusLine
+from src.domain.models.common.line import Line
 
 @dataclass
 class BusStop(Station):
@@ -35,7 +32,7 @@ class BusStop(Station):
         )
 
     @staticmethod
-    def update_bus_stop_with_line_info(bus_stop: Station, bus_line: BusLine):
+    def update_bus_stop_with_line_info(bus_stop: Station, bus_line: Line):
         if bus_line.has_alerts:
             for alert in bus_line.alerts:                
                 for entity in alert.affected_entities:

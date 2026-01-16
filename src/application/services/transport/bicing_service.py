@@ -1,8 +1,8 @@
 from typing import List
 from src.application.services.cache_service import CacheService
-from src.domain.models import BicingStation
+from src.domain.models.bicing.bicing_station import BicingStation
 from .service_base import ServiceBase
-from src.infrastructure.external import BicingApiService
+from src.infrastructure.external.api.bicing_api_service import BicingApiService
 from src.core.logger import logger
 
 

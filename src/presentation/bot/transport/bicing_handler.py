@@ -1,12 +1,17 @@
 from telegram import Update
 from telegram.ext import ContextTypes
+from src.application.services.message_service import MessageService
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.transport.bicing_service import BicingService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.user_data_manager import UserDataManager, audit_action
+from src.application.utils.transport_data_compressor import TransportDataCompressor
 from src.domain.enums.transport_type import TransportType
 from src.application.utils.google_maps_helper import GoogleMapsHelper
 from src.presentation.bot.keyboard_factory import KeyboardFactory
 from .handler_base import HandlerBase
 
-from src.application.services import BicingService, UpdateManager, MessageService, TelegraphService, UserDataManager, audit_action
-from src.application.utils import TransportDataCompressor
+
 from src.core.logger import logger
 from src.infrastructure.localization.language_manager import LanguageManager
 

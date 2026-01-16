@@ -1,5 +1,12 @@
-from src.domain.enums import Callbacks, TransportType
-from src.domain.models import LineRoute
+from src.application.services.message_service import MessageService
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.transport.tram_service import TramService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.user_data_manager import UserDataManager
+from src.application.utils.transport_data_compressor import TransportDataCompressor
+from src.domain.enums.callbacks import Callbacks
+from src.domain.enums.transport_type import TransportType
+from src.domain.models.common.line_route import LineRoute
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -7,10 +14,7 @@ from telegram.ext import ContextTypes
 from src.presentation.bot.keyboard_factory import KeyboardFactory
 from src.presentation.bot.transport.handler_base import HandlerBase
 
-from src.application.services import TramService, UpdateManager, MessageService, TelegraphService, UserDataManager
-
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.application.utils import TransportDataCompressor, GoogleMapsHelper
 from src.core.logger import logger
 
 class TramHandler(HandlerBase):

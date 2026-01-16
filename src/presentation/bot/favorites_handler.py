@@ -1,14 +1,21 @@
 from src.domain.schemas.favorite import FavoriteResponse 
-from src.application.utils import BoolConverter
+from src.application.utils.bool_converter import BoolConverter
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.application.services import MetroService, BusService, TramService, RodaliesService, MessageService, BicingService, FgcService
+from src.application.services.transport.metro_service import MetroService
+from src.application.services.transport.bus_service import BusService
+from src.application.services.transport.tram_service import TramService
+from src.application.services.transport.rodalies_service import RodaliesService
+from src.application.services.transport.bicing_service import BicingService
+from src.application.services.transport.fgc_service import FgcService
 from src.presentation.bot.keyboard_factory import KeyboardFactory
 
-from src.domain.enums import ClientType, TransportType
+from src.domain.enums.clients import ClientType
+from src.domain.enums.transport_type import TransportType
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.application.services import UserDataManager, MessageService
+from src.application.services.user_data_manager import UserDataManager
+from src.application.services.message_service import MessageService
 
 class FavoritesHandler:
 

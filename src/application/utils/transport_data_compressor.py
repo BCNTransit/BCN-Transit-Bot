@@ -5,13 +5,15 @@ import unicodedata
 
 from typing import List, Dict, Any
 
-from src.domain.models.bus import BusStop
+from src.domain.models.bus.bus_stop import BusStop
+from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
-from src.domain.models.metro import MetroStation
-from src.domain.models.rodalies import RodaliesLine, RodaliesStation
-from src.domain.models.tram import TramStation
-from src.domain.models.bicing import BicingStation
-from src.domain.models.fgc import FgcStation, FgcLine
+from src.domain.models.metro.metro_station import MetroStation
+from src.domain.models.common.line import Line
+from src.domain.models.tram.tram_station import TramStation
+from src.domain.models.rodalies.rodalies_station import RodaliesStation
+from src.domain.models.bicing.bicing_station import BicingStation
+from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.enums.transport_type import TransportType
 
 from ...core.logger import logger
@@ -199,7 +201,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.TRAM.value, line_id)
         return compressed
     
-    def map_rodalies_stations(self, stations: List[RodaliesStation], line: RodaliesLine):
+    def map_rodalies_stations(self, stations: List[RodaliesStation], line: Line):
         self._log_mapping_start(TransportType.RODALIES.value, len(stations), line.id, line.name)
 
         stops_base = [
@@ -257,7 +259,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.BICING.value, '')
         return compressed
     
-    def map_fgc_stations(self, stations: List[FgcStation], line: FgcLine):
+    def map_fgc_stations(self, stations: List[FgcStation], line: Line):
         self._log_mapping_start(TransportType.FGC.value, len(stations), line.id, line.name)
 
         stops_base = [

@@ -1,18 +1,26 @@
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from typing import List
-import aiohttp
-import re
 import inspect
+import re
+from datetime import datetime, timedelta
+from typing import List
+from zoneinfo import ZoneInfo
 
+import aiohttp
+
+from src.domain.models.common.line import Line
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
-from src.domain.models import LineRoute, Connections, FgcLine, MetroLine, MetroStation, BusStop, BusLine
+from src.domain.models.common.line_route import LineRoute
+from src.domain.models.common.connections import Connections
 
+from src.domain.models.metro.metro_station import MetroStation
 from src.domain.models.metro.metro_access import MetroAccess
-from src.domain.models.rodalies.rodalies_line import RodaliesLine
-from src.domain.models.tram.tram_line import TramLine
+
+from src.domain.models.bus.bus_stop import BusStop
+from src.domain.models.common.line import Line
+
 from src.domain.enums.transport_type import TransportType
+
 from src.core.logger import logger
+from src.infrastructure.mappers.line_mapper import LineMapper
 
 
 
@@ -78,13 +86,13 @@ class TmbApiService:
             items.sort(key=sort_key)
         return items, data
     
-    async def get_bus_lines(self) -> List[BusLine]:   
+    async def get_bus_lines(self) -> List[Line]:   
         url = f'{self.BASE_URL_TRANSIT}/linies/bus'
         data = await self._get(url)
         features = data['features']
 
         lines = []
-        lines.extend(BusLine.create_bus_line(feature) for feature in features if feature['properties']['NOM_FAMILIA'] and 'Llançadores' not in feature['properties']['NOM_LINIA'])
+        lines.extend(LineMapper.map_bus_line(feature) for feature in features if feature['properties']['NOM_FAMILIA'] and 'Llançadores' not in feature['properties']['NOM_LINIA'])
         lines.sort(key=self._natural_key)
         return lines
 
@@ -109,13 +117,13 @@ class TmbApiService:
 
         return from_origin + from_destination
 
-    async def get_metro_lines(self) -> List[MetroLine]:
+    async def get_metro_lines(self) -> List[Line]:
         url = f'{self.BASE_URL_TRANSIT}/linies/metro'
         data = await self._get(url)
         features = data['features']
 
         lines = []
-        lines.extend(MetroLine.create_metro_line(feature) for feature in features if feature['properties']['NOM_LINIA'] and "FM" not in feature['properties']['NOM_LINIA'])
+        lines.extend(LineMapper.map_metro_line(feature) for feature in features if feature['properties']['NOM_LINIA'] and "FM" not in feature['properties']['NOM_LINIA'])
         lines.sort(key=lambda x: x.name)
         return lines
     
@@ -280,19 +288,19 @@ class TmbApiService:
         for feature in features:
             props = feature["properties"]
             if str(props['NOM_OPERADOR']).lower() == str(TransportType.METRO.value).lower():
-                connection = MetroLine.create_metro_line(feature)
+                connection = LineMapper.map_metro_line(feature)
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == "tb":
-                connection = BusLine.create_bus_line(feature)
+                connection = LineMapper.map_bus_line(feature)
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == str(TransportType.TRAM.value).lower():
-                connection = TramLine.create_tram_connection_from_dict(props)
+                connection = LineMapper.map_tram_line(props)
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == str(TransportType.RODALIES.value).lower():
-                connection = RodaliesLine.create_rodalies_connection_from_dict(props)
+                connection = LineMapper.map_rodalies_line(props)
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == str(TransportType.FGC.value).lower():
-                connection = FgcLine.create_fgc_connection_from_dict(props)
+                connection = LineMapper.map_fgc_line(props)
                 connections.append(connection)
 
         return sorted(

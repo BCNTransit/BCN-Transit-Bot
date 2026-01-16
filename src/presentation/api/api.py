@@ -1,27 +1,35 @@
-
 import math
 from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.presentation.api.auth import get_current_user_uid
-from src.application.services import (
-    LineService, UserDataManager, BicingService, 
-    BusService, FgcService, MetroService, 
-    RodaliesService, TramService
-)
+
+from src.application.services.line_service import LineService
+from src.application.services.user_data_manager import UserDataManager
+from src.application.services.transport.bicing_service import BicingService
+from src.application.services.transport.bus_service import BusService
+from src.application.services.transport.fgc_service import FgcService
+from src.application.services.transport.metro_service import MetroService
+from src.application.services.transport.rodalies_service import RodaliesService
+from src.application.services.transport.tram_service import TramService
+
+from src.application.utils.distance_helper import DistanceHelper
+from src.application.utils.utils import Utils
+
+from src.domain.enums.clients import ClientType
+from src.domain.enums.transport_type import TransportType
 
 from src.domain.schemas.favorite import FavoriteResponse
-from src.domain.enums import (ClientType, TransportType)
 
-from src.domain.models import(Line, Location)
+from src.domain.models.common.line import Line
+from src.domain.models.common.location import Location
 
-from src.application.utils import (DistanceHelper, Utils)
-
-from src.infrastructure.database.database import async_session_factory
+from src.infrastructure.database.database import async_session_factory 
 from src.infrastructure.database.repositories.line_repository import LineRepository
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_db():

@@ -2,8 +2,10 @@ from telegram import Update
 from telegram.ext import (
     ContextTypes
 )
-from src.application.services import MessageService, UpdateManager, UserDataManager, audit_action
-from src.domain.enums import ClientType
+from src.application.services.message_service import MessageService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.user_data_manager import UserDataManager, audit_action
+from src.domain.enums.clients import ClientType
 from src.core.logger import logger
 from src.infrastructure.localization.language_manager import LanguageManager 
 

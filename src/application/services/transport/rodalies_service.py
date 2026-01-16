@@ -2,9 +2,13 @@ from collections import defaultdict
 from typing import List
 import time
 
-from src.domain.models import LineRoute, RodaliesLine, RodaliesStation, Alert, Connections
+from src.domain.models.rodalies.rodalies_station import RodaliesStation
+from src.domain.models.common.line import Line
+from src.domain.models.common.line_route import LineRoute
+from src.domain.models.common.alert import Alert
+from src.domain.models.common.connections import Connections
 from src.domain.enums.transport_type import TransportType
-from src.application.services import UserDataManager
+from src.application.services.user_data_manager import UserDataManager
 from src.infrastructure.localization.language_manager import LanguageManager
 from src.infrastructure.external.api.rodalies_api_service import RodaliesApiService
 from src.core.logger import logger
@@ -24,7 +28,7 @@ class RodaliesService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] RodaliesService initialized")
 
     # === CACHE CALLS ===
-    async def get_all_lines(self) -> List[RodaliesLine]:
+    async def get_all_lines(self) -> List[Line]:
         start = time.perf_counter()
         static_key = "rodalies_lines_static"
         alerts_key = "rodalies_lines_alerts"
@@ -102,7 +106,7 @@ class RodaliesService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) ejecutado en {elapsed:.4f} s")
         return routes
 
-    async def get_line_by_id(self, line_id: str) -> RodaliesLine:
+    async def get_line_by_id(self, line_id: str) -> Line:
         start = time.perf_counter()
         lines = await self.get_all_lines()
         line = next((l for l in lines if str(l.id) == str(line_id)), None)
@@ -160,7 +164,7 @@ class RodaliesService(ServiceBase):
             return connections
         
         same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [RodaliesLine.create_rodalies_connection(s.line_id, s.line_code, s.line_name, s.line_description, '', '', s.line_color) for s in same_stops]
+        connections = [Line.create_rodalies_connection(s.line_id, s.line_code, s.line_name, s.line_description, '', '', s.line_color) for s in same_stops]
         await self.cache_service.set(f"rodalies_station_connections_{station_code}", connections, ttl=3600*24)
 
         elapsed = (time.perf_counter() - start)

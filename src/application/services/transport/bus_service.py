@@ -8,10 +8,11 @@ from src.domain.models.common.connections import Connections
 from src.domain.enums.transport_type import TransportType
 from src.infrastructure.external.api.tmb_api_service import TmbApiService
 
-from src.domain.models.bus import BusLine, BusStop
+from src.domain.models.common.line import Line
+from src.domain.models.bus.bus_stop import BusStop
 from src.core.logger import logger
 
-from src.application.services import UserDataManager
+from src.application.services.user_data_manager import UserDataManager
 from src.infrastructure.localization.language_manager import LanguageManager
 
 from .service_base import ServiceBase
@@ -34,7 +35,7 @@ class BusService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] BusService initialized")
 
     # === CACHE CALLS ===
-    async def get_all_lines(self) -> List[BusLine]:
+    async def get_all_lines(self) -> List[Line]:
         start = time.perf_counter()
         static_key = "bus_lines_static"
         alerts_key = "bus_lines_alerts"
@@ -157,7 +158,7 @@ class BusService(ServiceBase):
         return data
 
     # === OTHER CALLS ===
-    async def get_stops_by_name(self, stop_name) -> List[BusLine]:
+    async def get_stops_by_name(self, stop_name) -> List[Line]:
         start = time.perf_counter()
         stops = await self.get_all_stops()
 
@@ -174,7 +175,7 @@ class BusService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] get_stops_by_name({stop_name}) -> {len(result)} matches ({elapsed:.4f} s)")
         return result
 
-    async def get_line_by_id(self, line_id) -> BusLine:
+    async def get_line_by_id(self, line_id) -> Line:
         start = time.perf_counter()
         lines = await self.get_all_lines()
         line = next((l for l in lines if str(l.code) == str(line_id)), None)
@@ -223,12 +224,12 @@ class BusService(ServiceBase):
 
         stops: List[BusStop] = []
 
-        async def process_stop(api_stop: BusStop, line: BusLine):
+        async def process_stop(api_stop: BusStop, line: Line):
             async with semaphore_connections:
                 stop = BusStop.update_bus_stop_with_line_info(api_stop, line)
                 stops.append(stop)
 
-        async def process_line(line: BusLine):
+        async def process_line(line: Line):
             async with semaphore_lines:
                 api_stops = await self.tmb_api_service.get_bus_line_stops(line.code)
             # Crear tareas concurrentes para cada parada
@@ -250,7 +251,7 @@ class BusService(ServiceBase):
 
         semaphore = asyncio.Semaphore(10)
 
-        async def process_line(line: BusLine):
+        async def process_line(line: Line):
             async with semaphore:
                 stops = await self.get_stops_by_line(line.code)
             return [(stop.code, stop.alerts) for stop in stops]

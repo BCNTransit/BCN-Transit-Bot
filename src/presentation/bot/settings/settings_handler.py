@@ -1,9 +1,9 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.presentation.bot import KeyboardFactory
-from src.application.services import audit_action
+from src.application.services.user_data_manager import audit_action
 from src.infrastructure.localization.language_manager import LanguageManager
+from src.presentation.bot.keyboard_factory import KeyboardFactory
 
 class SettingsHandler:
 
