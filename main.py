@@ -375,7 +375,7 @@ async def start_bot_and_api():
     )
 
     await asyncio.gather(
-        #bot.run(),
+        bot.run(),
         start_fastapi(app)
     )
 
