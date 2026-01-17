@@ -118,7 +118,7 @@ class AlertsService:
             notifications_tasks = []
 
             for user, user_favorites in users_with_favs:        
-                fav_codes = {f.STATION_CODE for f in user_favorites}
+                fav_codes = {f.station_code for f in user_favorites}
 
                 for alert in alerts:
                     if alert.id in user.already_notified:

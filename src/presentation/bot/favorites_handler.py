@@ -68,26 +68,26 @@ class FavoritesHandler:
             item = await self.metro_service.get_station_by_code(item_id)
             
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=str(item.code),
-                STATION_NAME=item.name,
-                STATION_GROUP_CODE=str(item.CODI_GRUP_ESTACIO),
-                LINE_NAME=item.line_name,
-                LINE_NAME_WITH_EMOJI=item.line_name_with_emoji,
-                LINE_CODE=line_id,
+                type=item_type,
+                station_code=str(item.code),
+                station_name=item.name,
+                station_group_code=str(item.CODI_GRUP_ESTACIO),
+                line_name=item.line_name,
+                line_name_with_emoji=item.line_name_with_emoji,
+                line_code=line_id,
                 coordinates=[item.latitude, item.longitude]
             )
         elif item_type == TransportType.BUS.value:
             item = await self.bus_service.get_stop_by_code(item_id)
 
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=str(item.code),
-                STATION_NAME=item.name,
-                STATION_GROUP_CODE='',
-                LINE_NAME=item.line_name,
-                LINE_NAME_WITH_EMOJI=item.line_name_with_emoji,
-                LINE_CODE=line_id,
+                type=item_type,
+                station_code=str(item.code),
+                station_name=item.name,
+                station_group_code='',
+                line_name=item.line_name,
+                line_name_with_emoji=item.line_name_with_emoji,
+                line_code=line_id,
                 coordinates=[item.latitude, item.longitude]
             )
         elif item_type == TransportType.TRAM.value:
@@ -95,13 +95,13 @@ class FavoritesHandler:
             line = await self.tram_service.get_line_by_id(line_id)      
 
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=str(item.code),
-                STATION_NAME=item.name,
-                STATION_GROUP_CODE='',
-                LINE_NAME=item.line_name,
-                LINE_NAME_WITH_EMOJI=item.line_name_with_emoji,
-                LINE_CODE=line_id,
+                type=item_type,
+                station_code=str(item.code),
+                station_name=item.name,
+                station_group_code='',
+                line_name=item.line_name,
+                line_name_with_emoji=item.line_name_with_emoji,
+                line_code=line_id,
                 coordinates=[item.latitude, item.longitude]
             )
         elif item_type == TransportType.RODALIES.value:
@@ -109,13 +109,13 @@ class FavoritesHandler:
             line = await self.rodalies_service.get_line_by_id(line_id)
 
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=str(item.code),
-                STATION_NAME=item.name,
-                STATION_GROUP_CODE='',
-                LINE_NAME=item.line_name,
-                LINE_NAME_WITH_EMOJI=item.line_name_with_emoji,
-                LINE_CODE=line_id,
+                type=item_type,
+                station_code=str(item.code),
+                station_name=item.name,
+                station_group_code='',
+                line_name=item.line_name,
+                line_name_with_emoji=item.line_name_with_emoji,
+                line_code=line_id,
                 coordinates=[item.latitude, item.longitude]
             )
                 
@@ -123,13 +123,13 @@ class FavoritesHandler:
             item = await self.bicing_service.get_station_by_id(item_id)
 
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=item.id,
-                STATION_NAME=item.streetName,
-                STATION_GROUP_CODE='',
-                LINE_NAME='',
-                LINE_NAME_WITH_EMOJI='',
-                LINE_CODE='',
+                type=item_type,
+                station_code=item.id,
+                station_name=item.streetName,
+                station_group_code='',
+                line_name='',
+                line_name_with_emoji='',
+                line_code='',
                 coordinates=[item.latitude, item.longitude]
             )
                 
@@ -138,13 +138,13 @@ class FavoritesHandler:
             line = await self.fgc_service.get_line_by_id(line_id)
 
             new_fav_item = FavoriteResponse(
-                TYPE=item_type,
-                STATION_CODE=str(item.code),
-                STATION_NAME=item.name,
-                STATION_GROUP_CODE='',
-                LINE_NAME=line.name,
-                LINE_NAME_WITH_EMOJI=line.name_with_emoji,
-                LINE_CODE=line_id,
+                type=item_type,
+                station_code=str(item.code),
+                station_name=item.name,
+                station_group_code='',
+                line_name=line.name,
+                line_name_with_emoji=line.name_with_emoji,
+                line_code=line_id,
                 coordinates=[item.latitude, item.longitude]
             )
 

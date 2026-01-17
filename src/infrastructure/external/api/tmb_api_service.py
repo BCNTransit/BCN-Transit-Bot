@@ -297,7 +297,7 @@ class TmbApiService:
                 connection = LineMapper.map_tram_connection(str(props.get('ID_LINIA')), str(props.get('CODI_LINIA')), props.get('NOM_LINIA'),  props.get('DESC_LINIA'), props.get('ORIGEN_LINIA'), props.get('DESTI_LINIA'))
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == str(TransportType.RODALIES.value).lower():
-                connection = LineMapper.map_rodalies_connection(props)
+                connection = LineMapper.map_rodalies_connection(str(props.get('ID_LINIA')), str(props.get('CODI_LINIA')), props.get('NOM_LINIA'), props.get('DESC_LINIA'), props.get('COLOR_LINIA'))
                 connections.append(connection)
             elif str(props['NOM_OPERADOR']).lower() == str(TransportType.FGC.value).lower():
                 connection = LineMapper.map_fgc_connection(str(props.get('ID_LINIA')), str(props.get('CODI_LINIA')), props.get('NOM_LINIA'), props.get('DESC_LINIA'), props.get('COLOR_LINIA'))

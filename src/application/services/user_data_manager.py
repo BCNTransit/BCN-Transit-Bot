@@ -313,12 +313,12 @@ class UserDataManager:
                 new_fav = DBFavorite(
                     user_id=internal_id,
                     transport_type=type.lower(),
-                    station_code=item.STATION_CODE,
-                    station_name=item.STATION_NAME,
-                    station_group_code=item.STATION_GROUP_CODE,
-                    line_name=item.LINE_NAME,
-                    line_name_with_emoji=item.LINE_NAME_WITH_EMOJI,
-                    line_code=item.LINE_CODE,
+                    station_code=item.station_code,
+                    station_name=item.station_name,
+                    station_group_code=item.station_group_code,
+                    line_name=item.line_name,
+                    line_name_with_emoji=item.line_name_with_emoji,
+                    line_code=item.line_code,
                     latitude=lat,
                     longitude=lon
                 )
@@ -461,19 +461,19 @@ class UserDataManager:
             language=db_user.language,
             receive_notifications=db_user.receive_notifications,
             already_notified=db_user.already_notified_ids if db_user.already_notified_ids else [],
-            fcm_token="" # Se inicializa vacío, pero el método principal lo sobreescribe
+            fcm_token=""
         )
 
     def _to_domain_favorite(self, f: DBFavorite, user_id_ext: str) -> FavoriteResponse:
         return FavoriteResponse(
-            USER_ID=str(user_id_ext),
-            TYPE=f.transport_type,
-            STATION_CODE=f.station_code,
-            STATION_NAME=f.station_name,
-            STATION_GROUP_CODE=f.station_group_code or "",
-            LINE_NAME=f.line_name or "",
-            LINE_NAME_WITH_EMOJI=f.line_name_with_emoji or "",
-            LINE_CODE=f.line_code or "",
+            user_id=str(user_id_ext),
+            type=f.transport_type,
+            station_code=f.station_code,
+            station_name=f.station_name,
+            station_group_code=f.station_group_code or "",
+            line_name=f.line_name or "",
+            line_name_with_emoji=f.line_name_with_emoji or "",
+            line_code=f.line_code or "",
             coordinates=[f.latitude or 0, f.longitude or 0]
         )
 

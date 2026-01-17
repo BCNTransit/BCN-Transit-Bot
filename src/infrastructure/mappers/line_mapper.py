@@ -63,17 +63,16 @@ class LineMapper:
         )
     
     @staticmethod
-    def map_rodalies_connection(line: dict) -> Line:
+    def map_rodalies_connection(id, code, name, description: str, color) -> Line:
         return Line(
-            id=str(line.get('ID_LINIA', '')),
-            code=str(line.get('CODI_LINIA', '')),
-            name=str(line.get('NOM_LINIA', '')),
-            description=str(line.get('DESC_LINIA', '')),
+            id=id,
+            code=code,
+            name=name,
+            description=description,
             transport_type=TransportType.RODALIES,
-            origin=line.get('DESC_LINIA').split("-")[0].strip() if line.get('DESC_LINIA') and "-" in line.get('DESC_LINIA') else '',
-            destination=line.get('DESC_LINIA').split("-")[1].strip() if line.get('DESC_LINIA') and "-" in line.get('DESC_LINIA') else '',
-            stations=[],
-            color=str(line.get('COLOR_LINIA', '')),
+            origin=description.split("-")[0].strip() if description and "-" in description else '',
+            destination=description.split("-")[1].strip() if description and "-" in description else '',
+            color=color,
         )
     
     @staticmethod

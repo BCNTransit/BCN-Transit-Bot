@@ -165,7 +165,15 @@ class RodaliesService(ServiceBase):
             return connections
         
         same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [LineMapper.map_rodalies_connection(s) for s in same_stops]
+        connections = [
+            LineMapper.map_rodalies_connection(
+                s.id,
+                s.code,
+                s.name,
+                s.description,
+                ''
+            )
+            for s in same_stops]
         await self.cache_service.set(f"rodalies_station_connections_{station_code}", connections, ttl=3600*24)
 
         elapsed = (time.perf_counter() - start)

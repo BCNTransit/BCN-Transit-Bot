@@ -241,32 +241,32 @@ class KeyboardFactory:
                 "emoji": TransportType.METRO.emoji,
                 "name_fmt": "{nom_linia} - {name}",
                 "callback": lambda item: Callbacks.METRO_STATION.format(
-                    line_code=item.LINE_CODE,
-                    station_code=item.STATION_CODE
+                    line_code=item.line_code,
+                    station_code=item.station_code
                 ),
             },
             TransportType.BUS.value: {
                 "emoji": TransportType.BUS.emoji,
                 "name_fmt": "({code}) {name}",
                 "callback": lambda item: Callbacks.BUS_STATION.format(
-                    line_code=item.LINE_CODE,
-                    station_code=item.STATION_CODE
+                    line_code=item.line_code,
+                    station_code=item.station_code
                 ),
             },
             TransportType.TRAM.value: {
                 "emoji": TransportType.TRAM.emoji,
                 "name_fmt": "{nom_linia} - {name}",
                 "callback": lambda item: Callbacks.TRAM_STATION.format(
-                    line_code=item.LINE_CODE,
-                    station_code=item.STATION_CODE
+                    line_code=item.line_code,
+                    station_code=item.station_code
                 ),
             },
             TransportType.RODALIES.value: {
                 "emoji": TransportType.RODALIES.emoji,
                 "name_fmt": "{nom_linia} - {name}",
                 "callback": lambda item: Callbacks.RODALIES_STATION.format(
-                    line_code=item.LINE_CODE,
-                    station_code=item.STATION_CODE
+                    line_code=item.line_code,
+                    station_code=item.station_code
                 ),
             },
             TransportType.BICING.value: {
@@ -274,15 +274,15 @@ class KeyboardFactory:
                 "name_fmt": "({code}) {name}",
                 "callback": lambda item: Callbacks.BICING_STATION.format(
                     line_code='bicing',
-                    station_code=item.STATION_CODE
+                    station_code=item.station_code
                 ),
             },
             TransportType.FGC.value: {
                 "emoji": TransportType.FGC.emoji,
                 "name_fmt": "{nom_linia} - {name}",
                 "callback": lambda item: Callbacks.FGC_STATION.format(
-                    line_code=item.LINE_CODE,
-                    station_code=item.STATION_CODE
+                    line_code=item.line_code,
+                    station_code=item.station_code
                 ),
             },
         }
