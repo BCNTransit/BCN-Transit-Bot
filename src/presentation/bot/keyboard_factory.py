@@ -290,14 +290,14 @@ class KeyboardFactory:
         fav_keyboard = []
 
         for item in favs:
-            config = TRANSPORT_CONFIG.get(item.TYPE)
+            config = TRANSPORT_CONFIG.get(item.type)
             if not config:
                 continue
 
             name = config["name_fmt"].format(
-                nom_linia=item.LINE_NAME_WITH_EMOJI,
-                name=item.STATION_NAME,
-                code=item.STATION_CODE
+                nom_linia=item.line_name_with_emoji,
+                name=item.station_name,
+                code=item.station_code
             )
 
             fav_keyboard.append([
@@ -323,8 +323,8 @@ class KeyboardFactory:
 
         return ReplyKeyboardMarkup(
             keyboard,
-            resize_keyboard=True,    # ajusta tamaño automáticamente
-            one_time_keyboard=False  # el teclado permanece visible
+            resize_keyboard=True,
+            one_time_keyboard=False
         )
     
     def update_notifications(self, enabled_notifications: bool):
