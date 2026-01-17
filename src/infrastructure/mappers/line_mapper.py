@@ -68,7 +68,7 @@ class LineMapper:
             id=id,
             code=code,
             name=name,
-            description=description,
+            description=description if description is not None else name,
             transport_type=TransportType.RODALIES,
             origin=description.split("-")[0].strip() if description and "-" in description else '',
             destination=description.split("-")[1].strip() if description and "-" in description else '',
