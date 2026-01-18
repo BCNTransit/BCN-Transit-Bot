@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class Station:
-    id: int
+    id: int 
     code: int
     name: str
     latitude: float
@@ -26,7 +26,8 @@ class Station:
     line_name: Optional[str] = None
     line_name_with_emoji: Optional[str] = None
     has_alerts: Optional[bool] = False
-    alerts: Optional[List[Alert]] = field(default_factory=list)
+    
+    alerts: Optional[List["Alert"]] = field(default_factory=list)
     connections: Optional[Connections] = None
 
     @staticmethod
@@ -38,3 +39,9 @@ class Station:
                 for alert in station.alerts
             )
         return "\n".join(f"<pre>{alert}</pre>" for alert in set(raw_alerts))
+
+
+
+from src.domain.models.common.line import Line
+from src.domain.models.common.alert import Alert
+Line.model_rebuild()

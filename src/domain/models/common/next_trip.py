@@ -18,11 +18,9 @@ class NextTrip:
         now_ts = datetime.now(SPAIN_TZ).timestamp()
         delta_s = self.arrival_time - now_ts
 
-        # Caso 1: Llega muy pronto (< 40s)
         if delta_s <= arriving_threshold:
             return "🔜"
 
-        # Caso 2: Menos de 1 hora → mostrar minutos y segundos
         hours, remainder = divmod(int(delta_s), 3600)
         minutes, seconds = divmod(remainder, 60)
 
@@ -31,7 +29,6 @@ class NextTrip:
             parts.append(f"{hours}h")
         if minutes:
             parts.append(f"{minutes}min")
-        # Siempre mostramos segundos si no hay minutos o si seconds > 0
         if seconds or not minutes:
             parts.append(f"{seconds}s")
 
@@ -43,14 +40,11 @@ class NextTrip:
     
         remaining_time = self.remaining_time(arriving_threshold)
 
-        # Convertimos el timestamp de llegada en datetime
         arrival_dt = datetime.fromtimestamp(self.arrival_time)
 
-        # Caso 3: Es hoy pero dentro de más de 1 hora → mostrar hora exacta
         if arrival_dt.date() == datetime.now().date():
-            return f"{remaining_time} → {arrival_dt.strftime("⏰ %H:%Mh")}" 
+            return f"{remaining_time} → {arrival_dt.strftime('⏰ %H:%Mh')}"
 
-        # Caso 4: No es hoy → mostrar fecha y hora completa
         return arrival_dt.strftime("%d-%m-%Y → ⏰ %H:%Mh")
     
     def scheduled_arrival(self) -> datetime:

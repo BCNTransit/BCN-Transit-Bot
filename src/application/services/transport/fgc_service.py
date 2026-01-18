@@ -68,7 +68,7 @@ class FgcService(ServiceBase):
         semaphore_lines = asyncio.Semaphore(5)
         semaphore_near = asyncio.Semaphore(10)
 
-        async def process_station(line_station, line):
+        async def process_station(line_station: FgcStation, line: Line):
             async with semaphore_near:
                 line_station = FgcStation.update_line_info(line_station, line)
                 moute_station = await self.fgc_api_service.get_near_stations(

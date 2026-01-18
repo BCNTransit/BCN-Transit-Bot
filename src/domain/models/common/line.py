@@ -1,28 +1,34 @@
 from __future__ import annotations
 from typing import Optional, List, TYPE_CHECKING
-from pydantic import BaseModel, computed_field, Field
+from pydantic import BaseModel, computed_field, Field, ConfigDict
 
 from src.domain.enums.transport_type import TransportType
 
+# ✅ SOLO importamos Station y Alert para el IDE (Static Type Checking)
+# En tiempo de ejecución, Python ignorará esto, rompiendo el ciclo de importación.
 if TYPE_CHECKING:
+    from src.domain.models.common.station import Station
     from src.domain.models.common.alert import Alert
 
 class Line(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
+    original_id: Optional[str] = None 
+    
     code: str
     name: str
     description: Optional[str] = None
     origin: Optional[str] = None
     destination: Optional[str] = None
-    color: str = None
+    color: Optional[str] = None 
     transport_type: TransportType
     category: Optional[str] = None 
+    
     stations: List["Station"] = Field(default_factory=list)    
+    
     has_alerts: bool = False
     alerts: List["Alert"] = Field(default_factory=list)
-
-    class Config:
-        from_attributes = True
 
     @computed_field
     def name_with_emoji(self) -> str:
@@ -71,7 +77,3 @@ class Line(BaseModel):
             return "🚌"
 
         return ""
-    
-from src.domain.models.common.station import Station
-from src.domain.models.common.alert import Alert
-Line.model_rebuild()

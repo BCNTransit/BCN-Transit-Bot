@@ -43,10 +43,11 @@ class ServiceBase:
 
         final_lines = []
         for model in db_lines:
-            line = Line.model_validate(model)            
+            line = Line.model_validate(model)
             line_alerts = alerts_dict.get(line.name, [])
             line.has_alerts = len(line_alerts) > 0
             line.alerts = line_alerts
+            line.id = model.original_id
             
             final_lines.append(line)
 
