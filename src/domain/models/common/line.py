@@ -14,7 +14,7 @@ class Line(BaseModel):
     description: Optional[str] = None
     origin: Optional[str] = None
     destination: Optional[str] = None
-    color: str = "808080"
+    color: str = None
     transport_type: TransportType
     category: Optional[str] = None 
     stations: List["Station"] = Field(default_factory=list)    

@@ -22,11 +22,24 @@ from .service_base import ServiceBase
 class RodaliesService(ServiceBase):
 
     def __init__(self, rodalies_api_service: RodaliesApiService, language_manager: LanguageManager, cache_service: CacheService = None, user_data_manager: UserDataManager = None):
-        super().__init__(cache_service)
+        super().__init__(cache_service, user_data_manager)
         self.rodalies_api_service = rodalies_api_service
         self.language_manager = language_manager
         self.user_data_manager = user_data_manager        
         logger.info(f"[{self.__class__.__name__}] RodaliesService initialized")
+
+    async def get_all_lines(self) -> List[Line]:
+        return await super().get_all_lines(TransportType.RODALIES)
+    
+    async def fetch_alerts(self) -> List[Alert]:
+        api_alerts = await self.rodalies_api_service.get_global_alerts()
+        return [Alert.map_from_rodalies_alert(a) for a in api_alerts]
+
+    async def fetch_lines(self) -> List[Line]:
+        return await self.rodalies_api_service.get_lines()
+
+    async def sync_lines(self):
+        await super().sync_lines(TransportType.RODALIES)
 
     # === CACHE CALLS ===
     async def get_all_lines(self) -> List[Line]:

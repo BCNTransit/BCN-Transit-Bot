@@ -4,7 +4,6 @@ from time import time
 from typing import List
 import time
 
-from src.application.utils.utils import Utils
 from src.domain.models.metro.metro_station import MetroStation
 from src.domain.models.metro.metro_access import MetroAccess
 from src.domain.models.common.alert import Alert
@@ -26,64 +25,28 @@ class MetroService(ServiceBase):
     """
     Service to interact with Metro data via TmbApiService, with optional caching.
     """
+    
 
     def __init__(self, tmb_api_service: TmbApiService, language_manager: LanguageManager,
                  cache_service: CacheService = None, user_data_manager: UserDataManager = None):
-        super().__init__(cache_service)
+        super().__init__(cache_service, user_data_manager)
         self.tmb_api_service = tmb_api_service
         self.language_manager = language_manager
         self.user_data_manager = user_data_manager
         logger.info(f"[{self.__class__.__name__}] MetroService initialized")
 
-    # ===== CACHE CALLS ====
     async def get_all_lines(self) -> List[Line]:
-        start = time.perf_counter()
-        static_key = "metro_lines_static"
-        alerts_key = "metro_lines_alerts"
+        return await super().get_all_lines(TransportType.METRO)    
+    
+    async def fetch_alerts(self) -> List[Alert]:
+        api_alerts = await self.tmb_api_service.get_global_alerts(TransportType.METRO)
+        return [Alert.map_from_metro_alert(a) for a in api_alerts]
 
-        cached_lines, cached_alerts = await asyncio.gather(
-            self._get_from_cache_or_data(static_key, None, cache_ttl=3600*24*7),
-            self._get_from_cache_or_data(alerts_key, None, cache_ttl=3600)
-        )
+    async def fetch_lines(self) -> List[Line]:
+        return await self.tmb_api_service.get_metro_lines()
 
-        if cached_lines is not None and cached_lines:
-            if cached_alerts:
-                for line in cached_lines:
-                    line_alerts = cached_alerts.get(line.name, [])
-                    line.has_alerts = any(line_alerts)
-                    line.alerts = line_alerts
-            elapsed = time.perf_counter() - start
-            logger.info(f"[{self.__class__.__name__}] get_all_lines() -> cached ({elapsed:.4f} s)")
-            return cached_lines
-
-        lines, api_alerts = await asyncio.gather(
-            self.tmb_api_service.get_metro_lines(),
-            self.tmb_api_service.get_global_alerts(TransportType.METRO)
-        )
-        alerts = [Alert.map_from_metro_alert(alert) for alert in api_alerts]
-
-        result = defaultdict(list)
-        for alert in alerts:
-            await self.user_data_manager.register_alert(TransportType.METRO, alert)
-            seen_lines = set()
-            for entity in alert.affected_entities:
-                if entity.line_name and entity.line_name not in seen_lines:
-                    result[entity.line_name].append(alert)
-                    seen_lines.add(entity.line_name)
-
-        alerts_dict = dict(result)
-
-        for line in lines:
-            line_alerts = alerts_dict.get(line.name, [])
-            line.has_alerts = any(line_alerts)
-            line.alerts = line_alerts
-
-        await self._get_from_cache_or_data(static_key, lines, cache_ttl=3600*24*7)
-        await self._get_from_cache_or_data(alerts_key, alerts_dict, cache_ttl=3600)
-
-        elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_all_lines() -> {len(lines)} lines ({elapsed:.4f} s)")
-        return sorted(lines, key=Utils.sort_lines)
+    async def sync_lines(self):
+        await super().sync_lines(TransportType.METRO)
 
     async def get_all_stations(self) -> List[MetroStation]:
         start = time.perf_counter()

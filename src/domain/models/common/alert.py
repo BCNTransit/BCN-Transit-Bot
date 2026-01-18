@@ -37,7 +37,6 @@ class Alert:
     affected_entities: List[AffectedEntity]
 
     def _get_alert_content(self):
-        # ... tu lógica actual (sin cambios) ...
         title = self.publications[0].headerEs if self.publications and self.publications[0].headerEs else ""
         description = self.publications[0].textEs if self.publications and self.publications[0].textEs else "Sin descripción"
         description = html.escape(description)
@@ -51,7 +50,6 @@ class Alert:
         lineas = sorted({e.line_name for e in self.affected_entities if e.line_name})
         lineas_str = ", ".join(lineas) if lineas else "Varias líneas"
         
-        # ... resto de tu lógica de emojis ...
         status_emojis = {"ACTIVE": "🚨", "INACTIVE": "✅", "RESOLVED": "✅", "PLANNED": "📅"}
         status_emoji = status_emojis.get(self.status.upper(), "ℹ️")
 
@@ -64,7 +62,6 @@ class Alert:
         return title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description
 
     def format_app_alert(self):
-        # ... sin cambios ...
         title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()
         return (
             f"🚇 Líneas: {lineas_str}\n"
@@ -73,7 +70,6 @@ class Alert:
         )
 
     def format_html_alert(self):
-        # ... sin cambios ...
         title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()
         return (
             f"🚨 <b>NUEVA ALERTA</b> 🚨\n\n"
@@ -86,11 +82,9 @@ class Alert:
             f"📝 <b>Info:</b>\n<i>{description}</i>"
         )
 
-    # --- MÉTODOS ESTÁTICOS (AQUÍ ESTÁ EL CAMBIO) ---
 
     @staticmethod
     def map_from_metro_alert(metro_alert):
-        # ✅ Importación local para evitar ciclo
         from src.application.utils.html_helper import HtmlHelper 
 
         publications = []
@@ -105,7 +99,6 @@ class Alert:
             )
             for metro_alert_publication in metro_alert.get('publications')
         )
-        # ... resto del método igual ...
         affected_entities = []
         affected_entities.extend(
             AffectedEntity(
@@ -133,7 +126,6 @@ class Alert:
 
     @staticmethod
     def map_from_bus_alert(bus_alert):
-        # ✅ Importación local
         from src.application.utils.html_helper import HtmlHelper
 
         channel_info = bus_alert.get('channelInfoTO')
@@ -146,7 +138,6 @@ class Alert:
                 textEs=HtmlHelper.clean_text(channel_info.get('textEs', '')),
             )]
         
-        # ... resto del método igual ...
         affected_entities = []
         for entity in bus_alert.get('linesAffected'):
             ways = entity.get('ways')
@@ -177,7 +168,6 @@ class Alert:
 
     @staticmethod
     def map_from_rodalies_alert(rodalies_alert):
-        # ✅ Importación local
         from src.application.utils.html_helper import HtmlHelper
 
         title = rodalies_alert.get('title')
@@ -192,7 +182,6 @@ class Alert:
                 textEs=HtmlHelper.clean_text(description.get('es', '')),
             )
         ]
-        # ... resto del método igual ...
         affected_entities = []
         affected_entities.extend(
             AffectedEntity(

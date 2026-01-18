@@ -1,6 +1,5 @@
 import asyncio
 import time
-from collections import defaultdict
 from typing import List
 
 from src.domain.models.tram.tram_station import TramStation
@@ -33,68 +32,30 @@ class TramService(ServiceBase):
         user_data_manager: UserDataManager = None
     ):
         start = time.perf_counter()
-        super().__init__(cache_service)
+        super().__init__(cache_service, user_data_manager)
         self.tram_api_service = tram_api_service
         self.language_manager = language_manager
         self.user_data_manager = user_data_manager
         elapsed = (time.perf_counter() - start)
         logger.info(f"[{self.__class__.__name__}] TramService initialized (tiempo: {elapsed:.4f} s)")
 
-    # === CACHE CALLS ===
     async def get_all_lines(self) -> List[Line]:
-        start = time.perf_counter()
+        return await super().get_all_lines(TransportType.TRAM)
+    
+    async def fetch_alerts(self) -> List[Alert]:
+        api_alerts = await self.tram_api_service.get_global_alerts()
+        return [Alert.map_from_tram_alert(a) for a in api_alerts]
 
-        static_key = "tram_lines_static"
-        alerts_key = "tram_lines_alerts"
+    async def fetch_lines(self) -> List[Line]:
+        return await self.tram_api_service.get_lines()
 
-        cached_lines = await self._get_from_cache_or_data(static_key, None, cache_ttl=3600*24)
-        cached_alerts = await self._get_from_cache_or_data(alerts_key, None, cache_ttl=3600)
+    async def sync_lines(self):
+        await super().sync_lines(TransportType.TRAM)
+    
+    async def fetch_stations_by_line(self, line_id: str) -> List[TramStation]:
+        return await self.tram_api_service.get_stops_on_line(line_id)
 
-        if cached_lines:
-            if cached_alerts:
-                for line in cached_lines:
-                    line_alerts = cached_alerts.get(line.name, [])
-                    line.has_alerts = bool(line_alerts)
-                    line.alerts = line_alerts
-            elapsed = (time.perf_counter() - start)
-            logger.info(f"[{self.__class__.__name__}] get_all_lines() from cache -> {len(cached_lines)} lines (tiempo: {elapsed:.4f} s)")
-            return cached_lines
-
-        # No hay caché, pedimos a la API
-        lines, api_alerts = await asyncio.gather(
-            self.tram_api_service.get_lines(),
-            self.tram_api_service.get_global_alerts()
-        )
-
-        alerts = [Alert.map_from_tram_alert(a) for a in api_alerts]
-        result = defaultdict(list)
-
-        for alert in alerts:
-            await self.user_data_manager.register_alert(TransportType.TRAM, alert)
-            seen_lines = set()
-            for entity in alert.affected_entities:
-                if entity.line_name and entity.line_name not in seen_lines:
-                    result[entity.line_name].append(alert)
-                    seen_lines.add(entity.line_name)
-
-        alerts_dict = dict(result)
-
-        for line in lines:
-            line_stops = await self.get_stops_by_line(line.id)
-            line.description = f"{line_stops[0].name} - {line_stops[-1].name}"
-            line_alerts = alerts_dict.get(line.name, [])
-            line.has_alerts = bool(line_alerts)
-            line.alerts = line_alerts
-
-        await asyncio.gather(
-            self._get_from_cache_or_data(static_key, lines, cache_ttl=3600*24),
-            self._get_from_cache_or_data(alerts_key, alerts_dict, cache_ttl=3600)
-        )
-
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_all_lines() -> {len(lines)} lines (tiempo: {elapsed:.4f} s)")
-        return lines
-
+    # === CACHE CALLS ===   
     async def get_all_stops(self) -> List[TramStation]:
         start = time.perf_counter()
 

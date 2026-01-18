@@ -1,5 +1,18 @@
-from typing import Callable, Any, List
+from abc import abstractmethod
+import asyncio
+from collections import defaultdict
+from typing import Callable, Any, Dict, List
 from rapidfuzz import process, fuzz
+from src.domain.models.common.station import Station
+from src.infrastructure.mappers.line_mapper import LineMapper
+from src.domain.schemas.models import LineModel
+from src.application.services.user_data_manager import UserDataManager
+from src.domain.models.common.alert import Alert
+from src.application.utils.utils import Utils
+from src.domain.enums.transport_type import TransportType
+from src.domain.models.common.line import Line
+from src.infrastructure.database.repositories.line_repository import LineRepository
+from src.infrastructure.database.database import async_session_factory
 from src.core.logger import logger
 from src.application.utils.html_helper import HtmlHelper
 from src.application.services.cache_service import CacheService
@@ -10,8 +23,108 @@ class ServiceBase:
     Base class for services that use optional caching and logging.
     """
 
-    def __init__(self, cache_service: CacheService = None):
+    def __init__(self, cache_service: CacheService = None, user_data_manager: UserDataManager = None):
+        self.line_repository = LineRepository(async_session_factory)
         self.cache_service = cache_service
+        self.user_data_manager = user_data_manager
+
+    async def get_all_lines(self, transport_type: TransportType) -> List[Line]:
+        start = time.perf_counter()
+        t_type_value = transport_type.value
+        alerts_cache_key = f"{t_type_value}_alerts_map"
+
+        lines_task = self.line_repository.get_all(t_type_value)
+        alerts_task = self._get_alerts_map(transport_type, alerts_cache_key)
+
+        db_lines, alerts_dict = await asyncio.gather(lines_task, alerts_task)
+
+        if not db_lines:
+            return []
+
+        final_lines = []
+        for model in db_lines:
+            line = Line.model_validate(model)            
+            line_alerts = alerts_dict.get(line.name, [])
+            line.has_alerts = len(line_alerts) > 0
+            line.alerts = line_alerts
+            
+            final_lines.append(line)
+
+        final_lines.sort(key=Utils.sort_lines)
+        
+        elapsed = time.perf_counter() - start
+        print(f"[{self.__class__.__name__}] get_enriched_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
+        
+        return final_lines
+    
+    async def sync_lines(self, transport_type: TransportType):
+        raw_lines = await self.fetch_lines()
+
+        db_models = []
+        for raw in raw_lines:
+            db_id = f"{transport_type.value}-{raw.id}"            
+
+            if transport_type == TransportType.TRAM:
+                line_stops = await self.fetch_stations_by_line(raw.id)
+                raw.origin = line_stops[0].name
+                raw.destination = line_stops[-1].name
+                raw.description = f"{line_stops[0].name} - {line_stops[-1].name}"
+
+            model = LineModel(
+                id=db_id,
+                original_id=str(raw.id),
+                code=str(raw.code),
+                name=raw.name,
+                description=raw.description,
+                origin=raw.origin,
+                destination=raw.destination,
+                transport_type=transport_type.value,
+                color=LineMapper.resolve_color(raw.name, transport_type, raw.color),
+                extra_data={"category": raw.category} if raw.category else None
+            )
+            db_models.append(model)
+
+        await self.line_repository.upsert_many(db_models)
+        print(f"✅ {len(db_models)} {transport_type.value} lines sync in DB.")
+    
+    async def _get_alerts_map(self, transport_type: TransportType, cache_key: str) -> Dict[str, List[Alert]]:
+        cached = await self.cache_service.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            raw_alerts = await self.fetch_alerts()
+            
+            result = defaultdict(list)
+            for alert in raw_alerts:
+                await self.user_data_manager.register_alert(transport_type.value, alert)
+                
+                seen_lines = set()
+                for entity in alert.affected_entities:
+                    if entity.line_name and entity.line_name not in seen_lines:
+                        result[entity.line_name].append(alert)
+                        seen_lines.add(entity.line_name)
+            
+            alerts_dict = dict(result)
+
+            await self.cache_service.set(cache_key, alerts_dict, ttl=3600)
+            return alerts_dict
+
+        except Exception as e:
+            print(f"❌ Error en alertas ({transport_type.value}): {e}")
+            return {}
+    
+    @abstractmethod
+    async def fetch_alerts(self) -> List[Alert]:
+        pass
+    
+    @abstractmethod
+    async def fetch_lines(self) -> List[Line]:
+        pass
+
+    @abstractmethod
+    async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
+        pass
 
     def log_exec_time(func):
         async def wrapper(*args, **kwargs):

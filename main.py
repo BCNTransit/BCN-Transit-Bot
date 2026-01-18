@@ -186,6 +186,8 @@ class BotApp:
     async def run_seeder(self):
         logger.info("Initializing Seeder...")
         total_start = datetime.now()
+        
+        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
 
         service_times = []
 
@@ -301,8 +303,7 @@ class BotApp:
 
     async def run(self):
         """Main async entrypoint for the bot."""
-        await init_db()
-        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+        await init_db()       
         await self.run_seeder()         
         initialize_firebase_app()
 

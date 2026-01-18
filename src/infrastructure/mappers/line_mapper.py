@@ -6,6 +6,30 @@ from src.domain.models.rodalies.rodalies_station import RodaliesStation
 class LineMapper:
 
     @staticmethod
+    def resolve_color(name: str, transport_type: TransportType, api_color: str = None) -> str:
+        RODALIES_COLORS = {
+            "R1": "73B0DF", "R2": "009640", "R2 Nord": "AACB2B", "R2 Sud": "005F27",
+            "R3": "E63027", "R4": "F6A22D", "R7": "BC79B2", "R8": "870064",
+            "R11": "0064A7", "R13": "E8308A", "R14": "5E4295", "R15": "9A8B75",
+            "R16": "B20933", "R17": "E87200", "RG1": "0071CE", "RT1": "00C4B3",
+            "RT2": "E577CB", "RL3": "949300", "RL4": "FFDD00",
+        }
+            
+        if api_color and api_color not in ["", None, "null"]:
+            return api_color.replace("#", "")
+
+        if transport_type == TransportType.RODALIES:
+            return RODALIES_COLORS.get(name, "808080")
+        
+        # Defaults
+        if transport_type == TransportType.METRO: return "D9303D"
+        if transport_type == TransportType.BUS: return "D9303D"
+        if transport_type == TransportType.FGC: return "F7931D"
+        if transport_type == TransportType.TRAM: return "009640"
+        
+        return "808080"
+
+    @staticmethod
     def map_metro_line(feature: Dict[str, Any]) -> Line:
         props = feature.get('properties', {})
         return Line(
@@ -59,7 +83,6 @@ class LineMapper:
             origin=data.get("originStation", {}).get("name", ""),
             destination=data.get("destinationStation", {}).get("name", ""),
             stations=stations,
-            color="808080"
         )
     
     @staticmethod

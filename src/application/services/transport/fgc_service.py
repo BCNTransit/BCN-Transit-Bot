@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import List
 
+from src.domain.models.common.alert import Alert
 from src.domain.models.common.connections import Connections
 from src.domain.models.common.line import Line
 from src.domain.models.fgc.fgc_station import FgcStation
@@ -31,23 +32,23 @@ class FgcService(ServiceBase):
         cache_service: CacheService = None,
         user_data_manager: UserDataManager = None
     ):
-        super().__init__(cache_service)
+        super().__init__(cache_service, user_data_manager)
         self.fgc_api_service = fgc_api_service
         self.language_manager = language_manager
         self.user_data_manager = user_data_manager
         logger.info(f"[{self.__class__.__name__}] FgcService initialized")
 
-    # ===== CACHE CALLS ====
     async def get_all_lines(self) -> List[Line]:
-        start = time.perf_counter()
-        result = await self._get_from_cache_or_api(
-            "fgc_lines",
-            lambda: self.fgc_api_service.get_all_lines(),
-            cache_ttl=3600 * 24
-        )
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_all_lines ejecutado en {elapsed:.4f} s")
-        return result
+        return await super().get_all_lines(TransportType.FGC)
+    
+    async def fetch_alerts(self) -> List[Alert]:
+        return []  # TODO: FGC alerts not implemented yet
+
+    async def fetch_lines(self) -> List[Line]:
+        return await self.fgc_api_service.get_all_lines()
+
+    async def sync_lines(self):
+        await super().sync_lines(TransportType.FGC)    
 
     async def get_all_stations(self) -> List[FgcStation]:
         start = time.perf_counter()
