@@ -4,11 +4,9 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.presentation.api.auth import get_current_user_uid
 
-from src.application.services.line_service import LineService
 from src.application.services.user_data_manager import UserDataManager
 from src.application.services.transport.bicing_service import BicingService
 from src.application.services.transport.bus_service import BusService
@@ -36,10 +34,6 @@ async def get_db():
     async with async_session_factory() as session:
         yield session
 
-async def get_line_service(session: AsyncSession = Depends(get_db)) -> LineService:
-    repo = LineRepository(session)
-    return LineService(repo)
-
 
 def clean_floats(obj):
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
@@ -56,8 +50,8 @@ def get_metro_router(
     router = APIRouter()
 
     @router.get("/lines", response_model=List[Line])
-    async def list_metro_lines(service: LineService = Depends(get_line_service)):
-        return await service.get_lines_by_type(TransportType.METRO)
+    async def list_metro_lines():
+        return await metro_service.get_all_lines()
 
     @router.get("/stations")
     async def list_metro_stations():
