@@ -224,7 +224,7 @@ class ServiceBase:
                 longitude=raw.longitude,
                 transport_type=transport_type.value,
                 order=raw.order,
-                line_code=f"{transport_type.value}-{raw.line_code}",
+                line_id=f"{transport_type.value}-{raw.line_code}",
                 connections_data=None, 
                 extra_data=dynamic_extra or None
             )
