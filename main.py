@@ -257,7 +257,7 @@ class BotApp:
     async def run(self):
         """Main async entrypoint for the bot."""
         await init_db()       
-        #await self.run_seeder()
+        await self.run_seeder()
         initialize_firebase_app()
         return
 
