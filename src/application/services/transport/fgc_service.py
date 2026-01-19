@@ -134,19 +134,13 @@ class FgcService(ServiceBase):
 
         if routes is not None:
             return routes
-
-        # 2. Lógica de Tiempo Real
-        moute_id = station.extra_data.get('moute_id') if station.extra_data else None
         
-        # Opción A: Usar API oficial "Mou-te" (Tiempo Real preciso)
-        if moute_id:
-            raw_routes = await self.fgc_api_service.get_moute_next_departures(moute_id)
+        if station.moute_id:
+            raw_routes = await self.fgc_api_service.get_moute_next_departures(station.moute_id)
             routes = self._map_moute_response(raw_routes)
         
         # Opción B: Fallback (Scraping o estimación)
         else:
-            # Asumimos que get_next_departures hace scraping o usa otra fuente
-            # station.line_name podría necesitar ajuste si guardaste el nombre completo en DB
             line_name_clean = station.extra_data.get('line_original_name') or station.line.name if station.line else ""
             raw_routes = await self.fgc_api_service.get_next_departures(station.name, line_name_clean)
             routes = self._map_fallback_response(raw_routes, station)
@@ -176,7 +170,8 @@ class FgcService(ServiceBase):
                     line_name=line_name,
                     line_code=line_name,
                     line_type=TransportType.FGC,
-                    route_id=line_name
+                    route_id=line_name,
+                    color=''
                 ))
         return routes
 
