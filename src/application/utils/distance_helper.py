@@ -1,13 +1,9 @@
 import math
 import time
 from typing import List, Optional, Tuple, Dict
-from src.domain.models.bus.bus_stop import BusStop
+from src.domain.models.common.station import Station
 from src.domain.models.common.location import Location
-from src.domain.models.metro.metro_station import MetroStation
-from src.domain.models.tram.tram_station import TramStation
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 from src.domain.models.bicing.bicing_station import BicingStation
-from src.domain.models.fgc.fgc_station import FgcStation
 from src.core.logger import logger
 
 class DistanceHelper:
@@ -40,7 +36,93 @@ class DistanceHelper:
             return f"{int(distance_km * 1000)}m"
         else:
             return f"{distance_km:.1f}km"
+        
+    @staticmethod
+    def build_stops_list(
+        stations: List[Station],
+        bicing_stations: List[BicingStation],
+        user_location: Optional[Location] = None,
+        results_to_return: int = 50,
+        max_distance_km: float = 1000
+    ) -> List[Dict]:
+        start = time.perf_counter()
+        stops = []
 
+        if user_location and results_to_return == 50:
+            results_to_return = 10
+
+        if user_location:
+            min_lat, max_lat, min_lon, max_lon = DistanceHelper.bounding_box(
+                user_location.latitude, user_location.longitude, max_distance_km
+            )
+        else:
+            min_lat = max_lat = min_lon = max_lon = None
+
+        def within_bbox(lat, lon):
+            if user_location is None:
+                return True
+            
+            if lat is None or lon is None:
+                return False
+
+            try:
+                lat_float = float(lat)
+                lon_float = float(lon)
+                
+                return min_lat <= lat_float <= max_lat and min_lon <= lon_float <= max_lon
+            except ValueError:
+                return False
+            
+        for s in stations:
+            if not within_bbox(s.latitude, s.longitude):
+                continue
+
+            distance_km = DistanceHelper.haversine_distance(
+                s.latitude, s.longitude, user_location.latitude, user_location.longitude
+            ) if user_location else None
+
+            if distance_km is not None and distance_km > max_distance_km:
+                continue
+
+            stops.append({
+                "type": s.transport_type.value,
+                "line_name": '',
+                "line_name_with_emoji": '',
+                "line_code": s.line_code,
+                "station_name": s.name,
+                "station_code": s.code,
+                "coordinates": (s.latitude, s.longitude),
+                "distance_km": distance_km
+            })
+
+        for b in bicing_stations:
+            if not within_bbox(b.latitude, b.longitude):
+                continue
+            distance_km = DistanceHelper.haversine_distance(
+                b.latitude, b.longitude, user_location.latitude, user_location.longitude
+            ) if user_location else None
+            if distance_km is not None and distance_km > max_distance_km:
+                continue
+            stops.append({
+                "type": "bicing",
+                "line_name": '',
+                "line_name_with_emoji": '',
+                "station_name": b.streetName,
+                "station_code": b.id,
+                "coordinates": (b.latitude, b.longitude),
+                "slots": b.slots,
+                "mechanical": b.mechanical_bikes,
+                "electrical": b.electrical_bikes,
+                "availability": b.disponibilidad,
+                "distance_km": distance_km
+            })
+
+        stops.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"]))
+        elapsed = time.perf_counter() - start
+        logger.info(f"[DistanceHelper] build_stops_list ejecutado en {elapsed:.4f} s | {len(stops)} stops encontrados")
+        return stops[:results_to_return]
+
+    '''
     @staticmethod
     def build_stops_list(
         metro_stations: List[MetroStation],
@@ -165,3 +247,4 @@ class DistanceHelper:
         elapsed = time.perf_counter() - start
         logger.info(f"[DistanceHelper] build_stops_list ejecutado en {elapsed:.4f} s | {len(stops)} stops encontrados")
         return stops[:results_to_return]
+    '''

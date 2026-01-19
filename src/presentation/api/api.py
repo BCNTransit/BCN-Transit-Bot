@@ -235,7 +235,7 @@ def get_results_router(
     async def list_near_stations(lat: float, lon: float, radius: float = 0.5):
         metro_task = metro_service.get_stations_by_name('')
         bus_task = bus_service.get_stops_by_name('')
-        tram_task = tram_service.get_stops_by_name('')
+        tram_task = tram_service.get_stations_by_name('')
         fgc_task = fgc_service.get_stations_by_name('')
         rodalies_task = rodalies_service.get_stations_by_name('')
         bicing_task = bicing_service.get_stations_by_name('')
@@ -245,12 +245,8 @@ def get_results_router(
         )
 
         near_results = DistanceHelper.build_stops_list(
-            metro_stations=metro,
-            bus_stops=bus,
-            tram_stops=tram,
-            rodalies_stations=rodalies,
+            stations=metro + bus + tram + fgc + rodalies,
             bicing_stations=bicing,
-            fgc_stations=fgc,
             user_location=Location(latitude=lat, longitude=lon),
             results_to_return=999999,
             max_distance_km=radius
@@ -270,7 +266,7 @@ def get_results_router(
         tasks = [
             metro_service.get_stations_by_name(name),
             bus_service.get_stops_by_name(name),
-            tram_service.get_stops_by_name(name),
+            tram_service.get_stations_by_name(name),
             fgc_service.get_stations_by_name(name),
             rodalies_service.get_stations_by_name(name),
             bicing_service.get_stations_by_name(name),
@@ -278,12 +274,8 @@ def get_results_router(
         metro, bus, tram, fgc, rodalies, bicing = await asyncio.gather(*tasks)
 
         search_results = DistanceHelper.build_stops_list(
-            metro_stations=metro,
-            bus_stops=bus,
-            tram_stops=tram,
-            rodalies_stations=rodalies,
-            bicing_stations=bicing,
-            fgc_stations=fgc
+            stations=metro + bus + tram + fgc + rodalies,
+            bicing_stations=bicing
         )
         return search_results
 
