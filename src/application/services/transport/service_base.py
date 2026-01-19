@@ -51,6 +51,9 @@ class ServiceBase:
             line.has_alerts = len(line_alerts) > 0
             line.alerts = line_alerts
             line.id = model.original_id
+
+            if model.extra_data and not line.category:
+                line.category = model.extra_data.get('category')
             
             final_lines.append(line)
 
