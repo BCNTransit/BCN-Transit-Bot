@@ -73,7 +73,7 @@ class ServiceBase:
             return []
 
         final_stations = [self._map_db_to_domain(model) for model in db_stations]
-        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="name")
+        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="line_name")
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_code}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
@@ -103,7 +103,7 @@ class ServiceBase:
                 query=station_name, items=all_stations, key=lambda s: s.name, threshold=75
             )
 
-        self._enrich_with_alerts(result, alerts_dict, key_attr="name")
+        self._enrich_with_alerts(result, alerts_dict, key_attr="line_name")
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} matches ({elapsed:.4f}s)")
