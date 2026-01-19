@@ -123,7 +123,7 @@ class MetroHandler(HandlerBase):
         # 2. Obtener datos necesarios de la callback
         _, line_id, station_code = self.message_service.get_callback_data(update)
         station = await self.metro_service.get_station_by_code(station_code)        
-        station_accesses = await self.metro_service.get_station_accesses(station.CODI_GRUP_ESTACIO)
+        station_accesses = await self.metro_service.get_station_accesses(station.station_group_code)
         station_alerts = MetroStation.get_alert_by_language(station, await self.user_data_manager.get_user_language(user_id))
         station_connections = await self.metro_service.get_station_connections(station.code)
         alerts_message = f"{self.language_manager.t("common.alerts")}\n{station_alerts}\n\n" if any(station_alerts) else ""

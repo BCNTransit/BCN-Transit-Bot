@@ -1,3 +1,149 @@
+import asyncio
+import time
+from typing import List, Optional
+
+# Domain Models
+from src.domain.models.common.station import Station
+from src.domain.models.common.line import Line
+from src.domain.models.common.line_route import LineRoute
+from src.domain.models.common.alert import Alert
+from src.domain.models.common.connections import Connections
+from src.domain.enums.transport_type import TransportType
+
+# Infrastructure & App
+from src.infrastructure.external.api.rodalies_api_service import RodaliesApiService
+from src.application.services.user_data_manager import UserDataManager
+from src.infrastructure.localization.language_manager import LanguageManager
+from src.application.services.cache_service import CacheService
+from src.core.logger import logger
+from .service_base import ServiceBase
+
+class RodaliesService(ServiceBase):
+
+    def __init__(self, 
+                 rodalies_api_service: RodaliesApiService, 
+                 language_manager: LanguageManager, 
+                 cache_service: CacheService = None, 
+                 user_data_manager: UserDataManager = None):
+        super().__init__(cache_service, user_data_manager)
+        self.rodalies_api_service = rodalies_api_service
+        self.language_manager = language_manager
+        logger.info(f"[{self.__class__.__name__}] RodaliesService initialized")
+
+    # =========================================================================
+    # 🔄 MÉTODOS DE SINCRONIZACIÓN (SEEDER)
+    # =========================================================================
+
+    async def sync_lines(self):
+        await super().sync_lines(TransportType.RODALIES)
+
+    async def sync_stations(self):
+        await super().sync_stations(TransportType.RODALIES)
+
+    # --- Implementación de Abstract Methods ---
+
+    async def fetch_lines(self) -> List[Line]:
+        return await self.rodalies_api_service.get_lines()
+
+    async def fetch_stations(self) -> List[Station]:
+        api_stations = []
+        lines = lines = await self.line_repository.get_all(TransportType.RODALIES.value)
+        
+        semaphore = asyncio.Semaphore(5)
+
+        async def fetch_line_stations(line: Line):
+            async with semaphore:
+                return await self.fetch_stations_by_line(line.original_id)
+
+        results = await asyncio.gather(*[fetch_line_stations(line) for line in lines])
+        
+        for stations in results:
+            api_stations.extend(stations)
+            
+        return api_stations
+    
+    async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
+        return await self.rodalies_api_service.get_stations_by_line_id(line_id)
+
+    async def fetch_alerts(self) -> List[Alert]:
+        api_alerts = await self.rodalies_api_service.get_global_alerts()
+        return [Alert.map_from_rodalies_alert(a) for a in api_alerts]
+
+    # =========================================================================
+    # 🔍 MÉTODOS DE LECTURA (APP)
+    # =========================================================================
+
+    async def get_all_lines(self) -> List[Line]:
+        """Obtiene todas las líneas de Rodalies enriquecidas con alertas."""
+        return await super().get_all_lines(TransportType.RODALIES)
+    
+    async def get_stations_by_line(self, line_id: str) -> List[Station]:
+        """Obtiene las estaciones de una línea (ej: 'rodalies-R1')."""
+        # Asegurar prefijo de DB
+        db_id = line_id
+        if not line_id.startswith("rodalies-"):
+            db_id = f"rodalies-{line_id}"
+            
+        return await super().get_stations_by_line(TransportType.RODALIES, line_id=db_id)
+
+    async def get_stations_by_name(self, station_name: str) -> List[Station]:
+        """Búsqueda difusa de estaciones por nombre."""
+        return await super().get_stations_by_name(station_name, TransportType.RODALIES)
+
+    async def get_station_by_code(self, station_code: str) -> Optional[Station]:
+        """
+        Busca una estación por su código (ID).
+        Usa la caché masiva de 'get_stations_by_name' para ser ultra-rápido.
+        """
+        all_stations = await self.get_stations_by_name("")
+        return next((s for s in all_stations if str(s.code) == str(station_code)), None)
+    
+    async def get_line_by_id(self, line_id: str) -> Optional[Line]:
+        lines = await self.get_all_lines()
+        # Buscamos por ID (ej: R1) o ID de DB (rodalies-R1)
+        return next((l for l in lines if str(l.code) == str(line_id) or l.id == line_id), None)
+
+    # =========================================================================
+    # ⚡ MÉTODOS REAL-TIME / ESPECÍFICOS
+    # =========================================================================
+
+    async def get_station_routes(self, station_code: str) -> List[LineRoute]:
+        """
+        Obtiene los próximos trenes en tiempo real.
+        """
+        start = time.perf_counter()
+        
+        # 1. Recuperamos la estación para asegurar que tenemos el ID correcto
+        # (A veces el frontend manda el code pero la API necesita otro ID, aquí asumimos code=id)
+        # station = await self.get_station_by_code(station_code)
+        # if not station: return []
+
+        # 2. Cache corta (10s) para tiempo real
+        routes = await self._get_from_cache_or_api(
+            cache_key=f"rodalies_station_{station_code}_routes",
+            api_call=lambda: self.rodalies_api_service.get_next_trains_at_station(station_code),
+            cache_ttl=10
+        )
+        
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
+        return routes
+
+    async def get_rodalies_station_connections(self, station_code: str) -> Connections:
+        """
+        Devuelve las conexiones.
+        En la nueva arquitectura, esto ya viene dentro del objeto Station (campo 'connections').
+        Mantenemos este método por compatibilidad, extrayéndolo de la estación guardada.
+        """
+        station = await self.get_station_by_code(station_code)
+        if station and station.connections:
+            return station.connections
+            
+        return Connections(lines=[])
+
+
+
+'''
 from collections import defaultdict
 from typing import List
 import time
@@ -184,3 +330,4 @@ class RodaliesService(ServiceBase):
         elapsed = (time.perf_counter() - start)
         logger.info(f"[{self.__class__.__name__}] get_rodalies_station_connections({station_code}) from cache -> {len(connections)} connections (tiempo: {elapsed:.4f} s)")
         return connections
+        '''

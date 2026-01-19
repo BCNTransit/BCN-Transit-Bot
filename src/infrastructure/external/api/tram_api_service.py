@@ -5,6 +5,7 @@ import inspect
 from datetime import datetime
 from typing import Any, Dict, List
 
+from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.models.tram.tram_station import TramStation
 from src.domain.models.tram.tram_connection import TramConnection, TramStationConnection
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
@@ -160,7 +161,7 @@ class TramApiService:
         api_stops = await self._request("GET", f"/lines/{line_id}/stops", params=params)
 
         stops = []
-        stops.extend(TramStation.create_tram_station(stop) for stop in api_stops)
+        stops.extend(StationMapper.map_tram_station(stop, line_id) for stop in api_stops)
         return stops
 
     async def get_stops(

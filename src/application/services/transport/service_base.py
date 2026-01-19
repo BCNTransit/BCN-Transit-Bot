@@ -3,9 +3,11 @@ import asyncio
 from collections import defaultdict
 from typing import Callable, Any, Dict, List
 from rapidfuzz import process, fuzz
+from src.domain.models.common.connections import Connections
+from src.infrastructure.database.repositories.stations_repository import StationsRepository
 from src.domain.models.common.station import Station
 from src.infrastructure.mappers.line_mapper import LineMapper
-from src.domain.schemas.models import LineModel
+from src.domain.schemas.models import LineModel, StationModel
 from src.application.services.user_data_manager import UserDataManager
 from src.domain.models.common.alert import Alert
 from src.application.utils.utils import Utils
@@ -25,6 +27,7 @@ class ServiceBase:
 
     def __init__(self, cache_service: CacheService = None, user_data_manager: UserDataManager = None):
         self.line_repository = LineRepository(async_session_factory)
+        self.stations_repository = StationsRepository(async_session_factory)
         self.cache_service = cache_service
         self.user_data_manager = user_data_manager
 
@@ -54,16 +57,113 @@ class ServiceBase:
         final_lines.sort(key=Utils.sort_lines)
         
         elapsed = time.perf_counter() - start
-        print(f"[{self.__class__.__name__}] get_enriched_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
+        print(f"[{self.__class__.__name__}] get_all_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
         
         return final_lines
     
+    async def get_stations_by_line(self, transport_type: TransportType, line_id: str) -> List[Station]:
+        start = time.perf_counter()
+
+        stations_task = self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_id}")
+        
+        alerts_key = f"{transport_type.value}_alerts_map"
+        alerts_task = self._get_alerts_map(transport_type, alerts_key)
+
+        db_stations, alerts_dict = await asyncio.gather(stations_task, alerts_task)
+
+        if not db_stations:
+            return []
+
+        final_stations = []
+        
+        from src.domain.models.common.connections import Connections
+
+        for model in db_stations:
+            station = Station.model_validate(model)
+
+            if model.connections_data and not station.connections:
+                try:
+                    station.connections = Connections.model_validate(model.connections_data)
+                except Exception as e:
+                    logger.warning(f"Error parseando conexiones estación {station.code}: {e}")
+
+            station_alerts = []            
+            if station.name in alerts_dict:
+                station_alerts.extend(alerts_dict[station.name])
+
+            station.has_alerts = len(station_alerts) > 0
+            station.alerts = station_alerts
+
+            final_stations.append(station)
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
+        
+        return final_stations
+    
+    async def get_stations_by_name(self, station_name: str, transport_type: TransportType) -> List[Station]:
+        start = time.perf_counter()
+        
+        cache_key = f"all_stations_{transport_type.value}"
+
+        async def fetch_and_map_all_stations():
+            models = await self.stations_repository.get_by_transport_type(transport_type.value)
+            
+            mapped_stations = []
+            from src.domain.models.common.connections import Connections
+
+            for model in models:
+                st = Station.model_validate(model)
+                
+                if model.connections_data and not st.connections:
+                    try:
+                        st.connections = Connections.model_validate(model.connections_data)
+                    except Exception:
+                        pass
+                
+                mapped_stations.append(st)
+            return mapped_stations
+
+        all_stations = await self._get_from_cache_or_api(
+            cache_key=cache_key,
+            api_call=fetch_and_map_all_stations,
+            cache_ttl=86400
+        )
+
+        if not station_name:
+            result = all_stations
+        else:
+            result = self.fuzzy_search(
+                query=station_name,
+                items=all_stations,
+                key=lambda s: s.name,
+                threshold=75 
+            )
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} matches ({elapsed:.4f}s)")
+        
+        return result
+
     async def sync_lines(self, transport_type: TransportType):
         raw_lines = await self.fetch_lines()
+        print(f"⏳ {len(raw_lines)} {transport_type.value} lines to be sync in DB.")
+
+        LINE_DB_COLUMNS = {
+            'id', 'original_id', 'code', 'name', 'description',
+            'latitude', 'longitude', 'transport_type', 'stations',
+            'destination', 'origin', 'color', 'extra_data'
+        }
 
         db_models = []
         for raw in raw_lines:
-            db_id = f"{transport_type.value}-{raw.id}"            
+            all_attributes = raw.model_dump()
+            dynamic_extra = {
+                key: value 
+                for key, value in all_attributes.items() 
+                if key not in LINE_DB_COLUMNS and value is not None
+            }
+            db_id = f"{transport_type.value}-{raw.id}"
 
             if transport_type == TransportType.TRAM:
                 line_stops = await self.fetch_stations_by_line(raw.id)
@@ -81,13 +181,74 @@ class ServiceBase:
                 destination=raw.destination,
                 transport_type=transport_type.value,
                 color=LineMapper.resolve_color(raw.name, transport_type, raw.color),
-                extra_data={"category": raw.category} if raw.category else None
+                extra_data=dynamic_extra or None
             )
             db_models.append(model)
 
         await self.line_repository.upsert_many(db_models)
         print(f"✅ {len(db_models)} {transport_type.value} lines sync in DB.")
-    
+
+    async def sync_stations(self, transport_type: TransportType):
+        raw_stations = await self.fetch_stations()
+        total = len(raw_stations)
+        print(f"⏳ {total} {transport_type.value} stations found. Starting sync...")
+
+        STATION_DB_COLUMNS = {
+            'id', 'original_id', 'code', 'name', 'description',
+            'latitude', 'longitude', 'transport_type', 'order', 
+            'line_id', 'connections_data', 'extra_data'
+        }
+
+        batch_size = 500
+        current_batch = []
+        
+        count = 0
+
+        for raw in raw_stations:
+            all_attributes = raw.model_dump()
+            dynamic_extra = {
+                key: value 
+                for key, value in all_attributes.items() 
+                if key not in STATION_DB_COLUMNS and value is not None
+            }
+            
+            db_id = f"{transport_type.value}-{raw.line_id}-{raw.id}"
+
+            model = StationModel(
+                id=db_id,
+                original_id=str(raw.id),
+                code=str(raw.code),
+                name=raw.name,
+                description=raw.description,
+                latitude=raw.latitude,
+                longitude=raw.longitude,
+                transport_type=transport_type.value,
+                order=raw.order,
+                line_id=f"{transport_type.value}-{raw.line_id}",
+                connections_data=None, 
+                extra_data=dynamic_extra or None
+            )
+            current_batch.append(model)
+
+            if len(current_batch) >= batch_size:
+                try:
+                    await self.stations_repository.upsert_many(current_batch)
+                    count += len(current_batch)
+                    print(f"   ↳ Guardadas {count}/{total} estaciones...")
+                    current_batch = []
+                except Exception as e:
+                    print(f"❌ Error guardando lote: {e}")
+
+        if current_batch:
+            try:
+                await self.stations_repository.upsert_many(current_batch)
+                count += len(current_batch)
+                print(f"   ↳ Guardadas {count}/{total} estaciones (Final).")
+            except Exception as e:
+                print(f"❌ Error guardando último lote: {e}")
+
+        print(f"✅ Sync finalizada: {count} {transport_type.value} stations en DB.")
+
     async def _get_alerts_map(self, transport_type: TransportType, cache_key: str) -> Dict[str, List[Alert]]:
         cached = await self.cache_service.get(cache_key)
         if cached:
@@ -124,7 +285,15 @@ class ServiceBase:
         pass
 
     @abstractmethod
+    async def fetch_stations(self) -> List[Station]:
+        pass
+
+    @abstractmethod
     async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
+        pass
+
+    @abstractmethod
+    async def fetch_station_connections(self, station: Station) -> Connections:
         pass
 
     def log_exec_time(func):

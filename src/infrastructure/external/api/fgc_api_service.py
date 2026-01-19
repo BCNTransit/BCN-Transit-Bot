@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.models.common.line import Line
 from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.enums.transport_type import TransportType
@@ -131,11 +132,10 @@ class FgcApiService:
         stations_df = stations_df.dropna(subset=["stop_id"])
 
         stations = [
-            FgcStation.create_fgc_station(row, line_name=line_name, order=stop_order_map[row["stop_id"]])
+            StationMapper.map_fgc_station(row, line_name=line_name, order=stop_order_map[row["stop_id"]])
             for _, row in stations_df.iterrows()
         ]
 
-        # 6. Ordenar la lista por 'order'
         stations.sort(key=lambda x: x.order)
         return stations
 
