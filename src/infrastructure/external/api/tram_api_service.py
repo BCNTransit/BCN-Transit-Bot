@@ -194,7 +194,7 @@ class TramApiService:
         params = {k: v for k, v in params.items() if v is not None}
         api_stops = await self._request("GET", "/stops", params=params)
         stops = []
-        stops.extend(TramStation.create_tram_station(stop) for stop in api_stops)
+        stops.extend(StationMapper.map_tram_station(stop) for stop in api_stops)
         return stops
 
     async def get_connections_at_stop(

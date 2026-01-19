@@ -5,18 +5,6 @@ from src.domain.enums.transport_type import TransportType
 
 @dataclass
 class RodaliesStation(Station):
-
-    @staticmethod
-    def create_rodalies_station(station_data):
-        return RodaliesStation(
-            id=station_data["id"],
-            code=station_data["id"],
-            order=None,
-            name=station_data["name"],
-            latitude=station_data["latitude"],
-            longitude=station_data["longitude"],
-            transport_type=TransportType.RODALIES
-        )
     
     @staticmethod
     def update_line_info(rodalies_station: Station, line: Line):

@@ -8,21 +8,6 @@ from src.domain.models.common.line import Line
 class TramStation(Station):
     outboundCode: int
     returnCode: int
-
-    @staticmethod
-    def create_tram_station(props: dict):
-        return TramStation(
-            id=props.get('id', ''),
-            code=props.get('gtfsCode',''),
-            name=props.get('name', ''),
-            order=props.get('order', ''),
-            outboundCode=props.get('outboundCode', ''),
-            returnCode=props.get('returnCode', ''),
-            description=props.get('description', ''),
-            latitude=props.get('latitude', ''),
-            longitude=props.get('longitude', ''),
-            transport_type=TransportType.TRAM
-        )
     
     @staticmethod
     def update_line_info(tram_station: Station, line: Line):

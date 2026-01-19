@@ -212,7 +212,7 @@ class ServiceBase:
                 if key not in STATION_DB_COLUMNS and value is not None
             }
             
-            db_id = f"{transport_type.value}-{raw.line_id}-{raw.id}"
+            db_id = f"{transport_type.value}-{raw.line_code}-{raw.id}"
 
             model = StationModel(
                 id=db_id,
@@ -224,7 +224,7 @@ class ServiceBase:
                 longitude=raw.longitude,
                 transport_type=transport_type.value,
                 order=raw.order,
-                line_id=f"{transport_type.value}-{raw.line_id}",
+                line_code=f"{transport_type.value}-{raw.line_code}",
                 connections_data=None, 
                 extra_data=dynamic_extra or None
             )

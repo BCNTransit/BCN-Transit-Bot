@@ -12,29 +12,6 @@ class MetroStation(Station):
     DESTI_SERVEI: str
 
     @staticmethod
-    def create_metro_station(feature: dict):
-        props = feature['properties']
-        coords = feature['geometry']['coordinates']
-        return MetroStation(
-            CODI_GRUP_ESTACIO=props.get('CODI_GRUP_ESTACIO',''),
-            id=props.get('ID_ESTACIO', ''),
-            code=props.get('CODI_ESTACIO',''),
-            name=props.get('NOM_ESTACIO', ''),
-            order=props.get('ORDRE_ESTACIO', ''),
-            line_id=props.get('ID_LINIA', ''),
-            line_code=props.get('CODI_LINIA', ''),
-            line_name=props.get('NOM_LINIA', ''),
-            line_color=props.get('COLOR_LINIA', ''),
-            line_name_with_emoji=_set_emoji_at_name(props.get('NOM_LINIA', '')),
-            description=props.get('DESC_SERVEI', ''),
-            ORIGEN_SERVEI=props.get('ORIGEN_SERVEI', ''),
-            DESTI_SERVEI=props.get('DESTI_SERVEI', ''),
-            latitude=coords[1],
-            longitude=coords[0],
-            transport_type=TransportType.METRO
-        )
-
-    @staticmethod
     def update_metro_station_with_line_info(metro_station: Station, metro_line: Line) -> Station:
         metro_station.line_description = metro_line.description
         metro_station.line_id = metro_line.id

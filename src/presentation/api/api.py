@@ -19,7 +19,6 @@ from src.application.utils.distance_helper import DistanceHelper
 from src.application.utils.utils import Utils
 
 from src.domain.enums.clients import ClientType
-from src.domain.enums.transport_type import TransportType
 
 from src.domain.schemas.favorite import FavoriteResponse
 

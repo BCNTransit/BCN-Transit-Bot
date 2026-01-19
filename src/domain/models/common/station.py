@@ -23,11 +23,8 @@ class Station(BaseModel):
     transport_type: TransportType
     
     description: Optional[str] = None
-    
-    line_id: Optional[str] = None
     line_code: Optional[str] = None
-    
-    _line_obj: Optional[Any] = None
+
     station_group_code: Optional[int] = None
     direction: Optional[str] = None
     outboundCode: Optional[str] = None
