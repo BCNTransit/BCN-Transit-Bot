@@ -73,7 +73,7 @@ class ServiceBase:
             return []
 
         final_stations = [self._map_db_to_domain(model) for model in db_stations]
-        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="line_name")
+        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="name")
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_code}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
@@ -103,7 +103,7 @@ class ServiceBase:
                 query=station_name, items=all_stations, key=lambda s: s.name, threshold=75
             )
 
-        self._enrich_with_alerts(result, alerts_dict, key_attr="line_name")
+        self._enrich_with_alerts(result, alerts_dict, key_attr="name")
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} matches ({elapsed:.4f}s)")
@@ -218,17 +218,32 @@ class ServiceBase:
 
     def _enrich_with_alerts(self, items: List[Any], alerts_map: Dict[str, List[Alert]], key_attr: str = "name"):
         for item in items:
-            key = getattr(item, key_attr, "")
-            relevant_alerts = alerts_map.get(key, [])
-            item.alerts = relevant_alerts
-            item.has_alerts = len(relevant_alerts) > 0
+            item_alerts = []
+            seen_ids = set()
+
+            primary_key = getattr(item, key_attr, "")
+            if primary_key in alerts_map:
+                for alert in alerts_map[primary_key]:
+                    if alert.id not in seen_ids:
+                        item_alerts.append(alert)
+                        seen_ids.add(alert.id)
+            
+            if hasattr(item, 'line_name') and item.line_name:
+                line_key = item.line_name
+                if line_key in alerts_map:
+                    for alert in alerts_map[line_key]:
+                        if alert.id not in seen_ids:
+                            item_alerts.append(alert)
+                            seen_ids.add(alert.id)
+
+            item.alerts = item_alerts
+            item.has_alerts = len(item_alerts) > 0
 
     async def _get_alerts_map(self, transport_type: TransportType) -> Dict[str, List[Alert]]:
         cache_key = f"{transport_type.value}_alerts_map"
         
         cached = await self.cache_service.get(cache_key)
-        if cached:
-            return cached
+        if cached: return cached
 
         try:
             raw_alerts = await self.fetch_alerts()
@@ -236,15 +251,21 @@ class ServiceBase:
             
             for alert in raw_alerts:
                 await self.user_data_manager.register_alert(transport_type, alert)
-                seen_lines = set()
+                
                 for entity in alert.affected_entities:
-                    if entity.line_name and entity.line_name not in seen_lines:
-                        result[entity.line_name].append(alert)
-                        seen_lines.add(entity.line_name)
+                    if entity.station_name:
+                         result[entity.station_name].append(alert)
+                    
+                    elif entity.line_name:
+                         result[entity.line_name].append(alert)
             
             alerts_dict = dict(result)
             await self.cache_service.set(cache_key, alerts_dict, ttl=3600)
             return alerts_dict
+
+        except Exception as e:
+            logger.error(f"Error alerts map: {e}")
+            return {}
 
         except Exception as e:
             print(f"❌ Error en alertas ({transport_type.value}): {e}")
