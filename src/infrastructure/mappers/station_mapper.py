@@ -78,7 +78,7 @@ class StationMapper:
             name=station_data["stop_name"],
             latitude=float(station_data["stop_lat"]),
             longitude=float(station_data["stop_lon"]),
-            line_name=line_name,
+            line_code=line_name,
             moute_id=str(station_data.get("moute_id")),
             order=order,
             transport_type=TransportType.FGC
