@@ -433,6 +433,7 @@ class ServiceBase:
             if not st.outbound_code: st.outbound_code = model.extra_data.get('outboundCode')
             if not st.return_code:   st.return_code = model.extra_data.get('returnCode')
             if not st.station_group_code: st.station_group_code = model.extra_data.get('station_group_code')
+            if not st.direction: st.direction = model.extra_data.get('direction')
 
         # 4. Hidratar Conexiones
         if model.connections_data and not st.connections:
