@@ -253,10 +253,11 @@ class ServiceBase:
                 await self.user_data_manager.register_alert(transport_type, alert)
                 
                 for entity in alert.affected_entities:
+                    
                     if entity.station_name:
                          result[entity.station_name].append(alert)
-                    
-                    elif entity.line_name:
+                         
+                    if entity.line_name:
                          result[entity.line_name].append(alert)
             
             alerts_dict = dict(result)
@@ -265,10 +266,6 @@ class ServiceBase:
 
         except Exception as e:
             logger.error(f"Error alerts map: {e}")
-            return {}
-
-        except Exception as e:
-            print(f"❌ Error en alertas ({transport_type.value}): {e}")
             return {}
 
     async def _get_from_cache_or_api(self, cache_key: str, api_call: Callable[[], Any], cache_ttl: int = 3600) -> Any:
