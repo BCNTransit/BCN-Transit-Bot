@@ -163,7 +163,7 @@ class ServiceBase:
                 for key, value in all_attributes.items() 
                 if key not in LINE_DB_COLUMNS and value is not None
             }
-            db_id = f"{transport_type.value}-{raw.id}"
+            db_id = f"{transport_type.value}-{raw.code}"
 
             if transport_type == TransportType.TRAM:
                 line_stops = await self.fetch_stations_by_line(raw.id)

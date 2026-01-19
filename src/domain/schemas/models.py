@@ -165,7 +165,7 @@ class StationModel(Base):
     
     transport_type = Column(String, index=True)
 
-    line_code = Column(String, ForeignKey("lines.code", ondelete="CASCADE"), index=True)
+    line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True)
     line = relationship("LineModel", backref="stations_rel")
 
     connections_data = Column(JSON, nullable=True) 
