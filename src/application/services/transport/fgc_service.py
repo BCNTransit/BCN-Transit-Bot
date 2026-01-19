@@ -98,7 +98,7 @@ class FgcService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.FGC)
     
-    async def get_stations_by_line(self, line_code: str) -> List[Station]:
+    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:
         return await super().get_stations_by_line_code(TransportType.FGC, line_code)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
