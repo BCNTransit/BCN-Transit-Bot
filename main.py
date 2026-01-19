@@ -8,6 +8,7 @@ from telegram.ext import (
     MessageHandler, filters
 )
 
+from src.application.services.connections_generator import ConnectionsGenerator
 from src.core.logger import logger
 
 from src.presentation.api.server import create_app
@@ -184,8 +185,8 @@ class BotApp:
         logger.info("Handlers initialized")
 
     async def run_seeder(self):
-        await reset_transport_data()        
-        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+        #await reset_transport_data()
+        #await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
         await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
 
 
@@ -257,7 +258,9 @@ class BotApp:
     async def run(self):
         """Main async entrypoint for the bot."""
         await init_db()       
-        await self.run_seeder()
+        #await self.run_seeder()
+        generator = ConnectionsGenerator()
+        await generator.generate_and_save_connections()
         initialize_firebase_app()
         return
 

@@ -41,30 +41,37 @@ class StationsRepository:
             return
 
         async with self.session_factory() as session:
-            # 1. Convertir Objetos a Diccionarios
-            # SQLAlchemy Core necesita dicts, no objetos de modelo.
-            # Filtramos '_sa_instance_state' que es basura interna de SQLAlchemy.
-            stations_data = [
-                {k: v for k, v in s.__dict__.items() if not k.startswith('_sa_')}
-                for s in stations
-            ]
+            valid_columns = {c.name for c in StationModel.__table__.columns}
 
-            # 2. Preparar la sentencia INSERT
+            stations_data = []
+            for s in stations:
+                data = {
+                    k: v for k, v in s.__dict__.items() 
+                    if k in valid_columns
+                }
+                stations_data.append(data)
+
             stmt = insert(StationModel).values(stations_data)
 
-            # 3. Configurar el "ON CONFLICT" (El Upsert real)
-            # Si el ID ya existe, actualiza todos los campos excepto el ID.
             update_dict = {
-                col.name: col 
-                for col in stmt.excluded 
-                if col.name != 'id' # No actualizamos la Primary Key
+                col.name: stmt.excluded[col.name]
+                for col in StationModel.__table__.columns
+                if col.name != 'id'
             }
 
             stmt = stmt.on_conflict_do_update(
-                index_elements=['id'], # La columna que causa el conflicto (PK)
+                index_elements=['id'],
                 set_=update_dict
             )
 
-            # 4. Ejecutar UNA sola query
             await session.execute(stmt)
             await session.commit()
+
+    async def get_all_raw(self) -> List[StationModel]:
+        async with self.session_factory() as session:
+            stmt = (
+                select(StationModel).options(selectinload(StationModel.line)) 
+            )
+            
+            result = await session.execute(stmt)
+            return result.scalars().all()
