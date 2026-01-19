@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import List, Optional, TYPE_CHECKING, Any
-from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, TYPE_CHECKING
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 
 from src.domain.enums.transport_type import TransportType
 
@@ -35,6 +35,10 @@ class Station(BaseModel):
     has_alerts: bool = False
     alerts: List["Alert"] = Field(default_factory=list)
     connections: Optional["Connections"] = None
+
+    @field_serializer('connections')
+    def serialize_connections(self, connections: Connections, _info):
+        return connections.lines if connections and connections.lines else []
 
     def get_alert_text(self, language: str) -> str:
         if not self.has_alerts:
