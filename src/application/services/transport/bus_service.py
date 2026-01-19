@@ -85,12 +85,8 @@ class BusService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.BUS)
     
-    async def get_stations_by_line(self, line_code: str) -> List[Station]:
-        db_id = line_code
-        if not line_code.startswith("bus-"):
-            db_id = f"bus-{line_code}"
-            
-        return await super().get_stations_by_line(TransportType.BUS, line_id=db_id)
+    async def get_stops_by_line_code(self, line_code: str) -> List[Station]:       
+        return await super().get_stations_by_line_code(TransportType.BUS, line_code)
 
     async def get_stops_by_name(self, stop_name: str) -> List[Station]:
         return await super().get_stations_by_name(stop_name, TransportType.BUS)

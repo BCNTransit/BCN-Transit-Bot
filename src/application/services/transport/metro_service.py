@@ -72,8 +72,8 @@ class MetroService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.METRO)
 
-    async def get_stations_by_line(self, line_code: str) -> List[Station]:            
-        return await super().get_stations_by_line(TransportType.METRO, line_id=line_code)
+    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:            
+        return await super().get_stations_by_line_code(TransportType.METRO, line_code)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         return await super().get_stations_by_name(station_name, TransportType.METRO)

@@ -41,7 +41,6 @@ class FgcService(ServiceBase):
         await super().sync_lines(TransportType.FGC)
 
     async def sync_stations(self):
-
         await super().sync_stations(TransportType.FGC)
 
     # --- Implementación de Abstract Methods ---
@@ -99,11 +98,8 @@ class FgcService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.FGC)
     
-    async def get_stations_by_line(self, line_id: str) -> List[Station]:
-        db_id = line_id
-        if not line_id.startswith("fgc-"):
-            db_id = f"fgc-{line_id}"
-        return await super().get_stations_by_line(TransportType.FGC, line_id=db_id)
+    async def get_stations_by_line(self, line_code: str) -> List[Station]:
+        return await super().get_stations_by_line_code(TransportType.FGC, line_code)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         return await super().get_stations_by_name(station_name, TransportType.FGC)

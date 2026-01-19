@@ -61,10 +61,10 @@ class ServiceBase:
         
         return final_lines
     
-    async def get_stations_by_line(self, transport_type: TransportType, line_id: str) -> List[Station]:
+    async def get_stations_by_line_code(self, transport_type: TransportType, line_code: str) -> List[Station]:
         start = time.perf_counter()
 
-        stations_task = self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_id}")
+        stations_task = self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_code}")
         
         alerts_key = f"{transport_type.value}_alerts_map"
         alerts_task = self._get_alerts_map(transport_type, alerts_key)
@@ -97,7 +97,7 @@ class ServiceBase:
             final_stations.append(station)
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_code}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
         
         return final_stations
     

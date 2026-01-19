@@ -52,9 +52,9 @@ def get_metro_router(
     async def list_metro_lines():
         return await metro_service.get_all_lines()
     
-    @router.get("/lines/{line_id}/stations")
-    async def list_metro_stations_by_line(line_id: str):
-        return await metro_service.get_stations_by_line(line_id)
+    @router.get("/lines/{line_code}/stations")
+    async def list_metro_stations_by_line(line_code: str):
+        return await metro_service.get_stations_by_line_code(line_code)
     
     @router.get("/stations/{station_code}/routes")
     async def list_metro_station_routes(station_code: str):
@@ -87,9 +87,9 @@ def get_bus_router(
     async def list_bus_lines():
         return await bus_service.get_all_lines()
     
-    @router.get("/lines/{line_id}/stops")
-    async def list_bus_stations_by_line(line_id: str):
-        return await bus_service.get_stops_by_line(line_id)
+    @router.get("/lines/{line_code}/stops")
+    async def list_bus_stations_by_line(line_code: str):
+        return await bus_service.get_stops_by_line_code(line_code)
     
     @router.get("/stops/{stop_code}/routes")
     async def list_bus_stop_routes(stop_code: str):
@@ -118,9 +118,9 @@ def get_tram_router(
     async def list_tram_lines():
         return sorted(await tram_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_id}/stops")
-    async def list_tram_stops_by_line(line_id: str):
-        return await tram_service.get_stops_by_line(line_id)
+    @router.get("/lines/{line_code}/stops")
+    async def list_tram_stops_by_line(line_code: str):
+        return await tram_service.get_stations_by_line_code(line_code)
     
     @router.get("/stops/{stop_code}/routes")
     async def list_tram_stop_routes(stop_code: str):
@@ -149,9 +149,9 @@ def get_rodalies_router(
     async def list_rodalies_lines():
         return sorted(await rodalies_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_id}/stations")
-    async def list_rodalies_stations_by_line(line_id: str):
-        return await rodalies_service.get_stations_by_line(line_id)
+    @router.get("/lines/{line_code}/stations")
+    async def list_rodalies_stations_by_line(line_code: str):
+        return await rodalies_service.get_stations_by_line_code(line_code)
     
     @router.get("/stations/{station_code}/routes")
     async def list_rodalies_station_routes(station_code: str):
@@ -195,9 +195,9 @@ def get_fgc_router(
     async def list_fgc_lines():
         return sorted(await fgc_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_id}/stations")
-    async def list_fgc_stations_by_line(line_id: str):
-        return await fgc_service.get_stations_by_line(line_id)
+    @router.get("/lines/{line_code}/stations")
+    async def list_fgc_stations_by_line(line_code: str):
+        return await fgc_service.get_stations_by_line_code(line_code)
     
     @router.get("/stations/{station_code}/routes")
     async def list_fgc_station_routes(station_code: str):

@@ -77,14 +77,8 @@ class RodaliesService(ServiceBase):
         """Obtiene todas las líneas de Rodalies enriquecidas con alertas."""
         return await super().get_all_lines(TransportType.RODALIES)
     
-    async def get_stations_by_line(self, line_id: str) -> List[Station]:
-        """Obtiene las estaciones de una línea (ej: 'rodalies-R1')."""
-        # Asegurar prefijo de DB
-        db_id = line_id
-        if not line_id.startswith("rodalies-"):
-            db_id = f"rodalies-{line_id}"
-            
-        return await super().get_stations_by_line(TransportType.RODALIES, line_id=db_id)
+    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:           
+        return await super().get_stations_by_line_code(TransportType.RODALIES, line_code)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         """Búsqueda difusa de estaciones por nombre."""

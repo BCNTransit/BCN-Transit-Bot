@@ -82,13 +82,8 @@ class TramService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.TRAM)
 
-    async def get_stations_by_line(self, line_id: str) -> List[Station]:
-        """Obtiene paradas de una línea (ej: 'tram-T1')."""
-        db_id = line_id
-        if not line_id.startswith("tram-"):
-            db_id = f"tram-{line_id}"
-            
-        return await super().get_stations_by_line(TransportType.TRAM, line_id=db_id)
+    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:          
+        return await super().get_stations_by_line_code(TransportType.TRAM, line_code)
 
     async def get_stations_by_name(self, stop_name: str) -> List[Station]:
         """Búsqueda difusa de paradas por nombre."""
