@@ -220,6 +220,8 @@ class ServiceBase:
         for item in items:
             item_alerts = []
             seen_ids = set()
+            
+            is_station_item = hasattr(item, 'line_name') and item.line_name is not None
 
             primary_key = getattr(item, key_attr, "")
             if primary_key in alerts_map:
@@ -228,13 +230,21 @@ class ServiceBase:
                         item_alerts.append(alert)
                         seen_ids.add(alert.id)
             
-            if hasattr(item, 'line_name') and item.line_name:
+            if is_station_item:
                 line_key = item.line_name
                 if line_key in alerts_map:
                     for alert in alerts_map[line_key]:
-                        if alert.id not in seen_ids:
-                            item_alerts.append(alert)
-                            seen_ids.add(alert.id)
+                        if alert.id in seen_ids:
+                            continue
+                        
+                        targets_specific_stations = any(e.station_name for e in alert.affected_entities)
+                        targets_me = any(e.station_name == item.name for e in alert.affected_entities)
+
+                        if targets_specific_stations and not targets_me:
+                            continue
+
+                        item_alerts.append(alert)
+                        seen_ids.add(alert.id)
 
             item.alerts = item_alerts
             item.has_alerts = len(item_alerts) > 0
