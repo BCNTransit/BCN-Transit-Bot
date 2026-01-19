@@ -61,10 +61,6 @@ class Favorite(Base):
 # DATOS DE SERVICIO (TMB/RODALIES)
 # ----------------------------
 class ServiceIncident(Base):
-    """
-    Guarda los datos de tu tabla 'ALERTS' (los avisos globales del servicio).
-    Usamos JSONB para guardar 'PUBLICATIONS' y 'AFFECTED_ENTITIES' tal cual vienen.
-    """
     __tablename__ = "service_incidents"
 
     id = Column(Integer, primary_key=True)

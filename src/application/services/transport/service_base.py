@@ -241,7 +241,7 @@ class ServiceBase:
             
             result = defaultdict(list)
             for alert in raw_alerts:
-                await self.user_data_manager.register_alert(transport_type.value, alert)
+                await self.user_data_manager.register_alert(transport_type, alert)
                 
                 seen_lines = set()
                 for entity in alert.affected_entities:
@@ -409,36 +409,24 @@ class ServiceBase:
         return await self._get_from_cache_or_data(cache_key, data, cache_ttl)
     
     def _map_db_to_domain(self, model) -> Station:
-        """
-        Convierte un StationModel (SQLAlchemy) a Station (Pydantic),
-        rellenando datos desde relaciones y extra_data.
-        """
-        # 1. Validación base
         st = Station.model_validate(model)
 
-        # 2. Hidratar desde la Relación 'Line' (JOIN)
         if model.line:
             st.line_name = model.line.name
             st.line_code = model.line.code
 
-        # 3. Hidratar desde 'extra_data' (Fallback y campos específicos)
         if model.extra_data:
-            # Fallback de línea
             if not st.line_name: st.line_name = model.extra_data.get('line_name')
             if not st.line_code: st.line_code = model.extra_data.get('line_code')
             
-            # IDs Específicos (Rodalies/FGC/Tram)
-            # 🛑 CORREGIDO: Antes asignabas todo a moute_id por error
             if not st.moute_id:      st.moute_id = model.extra_data.get('moute_id')
             if not st.outbound_code: st.outbound_code = model.extra_data.get('outboundCode')
             if not st.return_code:   st.return_code = model.extra_data.get('returnCode')
             if not st.station_group_code: st.station_group_code = model.extra_data.get('station_group_code')
             if not st.direction: st.direction = model.extra_data.get('direction')
 
-        # 4. Hidratar Conexiones
         if model.connections_data and not st.connections:
             try:
-                # Importación local para evitar ciclos
                 from src.domain.models.common.connections import Connections
                 st.connections = Connections.model_validate(model.connections_data)
             except Exception as e:

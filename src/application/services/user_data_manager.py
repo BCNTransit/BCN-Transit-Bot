@@ -566,7 +566,7 @@ class UserDataManager:
                 ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
 
                 domain_alerts.append(Alert(
-                    id=a.external_id,
+                    id=str(a.external_id),
                     transport_type=TransportType(a.transport_type) if a.transport_type else None,
                     begin_date=a.begin_date,
                     end_date=a.end_date,
