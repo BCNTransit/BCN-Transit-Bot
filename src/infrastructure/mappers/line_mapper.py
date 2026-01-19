@@ -1,7 +1,6 @@
 from typing import Any, Dict, List
 from src.domain.models.common.line import Line
 from src.domain.enums.transport_type import TransportType
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 
 class LineMapper:
 

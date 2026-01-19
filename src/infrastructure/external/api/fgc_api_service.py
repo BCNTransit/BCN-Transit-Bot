@@ -9,9 +9,9 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+from src.domain.models.common.station import Station
 from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.models.common.line import Line
-from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
 
@@ -108,7 +108,7 @@ class FgcApiService:
         self._trips = pd.read_csv(StringIO(await self._request("GET", urls["trips"], use_FGC_BASE_URL=False, text=True)))
         self._stop_times = pd.read_csv(StringIO(await self._request("GET", urls["stop_times"], use_FGC_BASE_URL=False, text=True)))
 
-    async def get_stations_by_line(self, line_code: str) -> List[FgcStation]:
+    async def get_stations_by_line(self, line_code: str) -> List[Station]:
         """Obtener todas las estaciones de una línea concreta con orden correcto"""
         await self._load_csvs()
 

@@ -7,7 +7,6 @@ from src.domain.models.common.station import Station
 from src.domain.models.common.line import Line
 from src.domain.models.common.line_route import LineRoute
 from src.domain.models.common.alert import Alert
-from src.domain.models.common.connections import Connections
 from src.domain.enums.transport_type import TransportType
 
 # Infrastructure & App
@@ -19,6 +18,10 @@ from src.core.logger import logger
 from .service_base import ServiceBase
 
 class RodaliesService(ServiceBase):
+    """
+    Servicio para gestionar datos de Rodalies.
+    Optimizado para llamadas paralelas controladas (API Renfe es sensible).
+    """
 
     def __init__(self, 
                  rodalies_api_service: RodaliesApiService, 
@@ -31,7 +34,7 @@ class RodaliesService(ServiceBase):
         logger.info(f"[{self.__class__.__name__}] RodaliesService initialized")
 
     # =========================================================================
-    # 🔄 MÉTODOS DE SINCRONIZACIÓN (SEEDER)
+    # 🔄 SYNC & FETCH IMPLEMENTATIONS
     # =========================================================================
 
     async def sync_lines(self):
@@ -40,25 +43,28 @@ class RodaliesService(ServiceBase):
     async def sync_stations(self):
         await super().sync_stations(TransportType.RODALIES)
 
-    # --- Implementación de Abstract Methods ---
-
     async def fetch_lines(self) -> List[Line]:
         return await self.rodalies_api_service.get_lines()
 
     async def fetch_stations(self) -> List[Station]:
-        api_stations = []
-        lines = lines = await self.line_repository.get_all(TransportType.RODALIES.value)
+        lines = await self.line_repository.get_all(TransportType.RODALIES.value)
+        if not lines:
+            lines = await self.fetch_lines()
         
         semaphore = asyncio.Semaphore(5)
 
-        async def fetch_line_stations(line: Line):
+        async def fetch_safe(line: Line):
             async with semaphore:
-                return await self.fetch_stations_by_line(line.original_id)
+                try:
+                    identifier = line.original_id if line.original_id else line.code
+                    return await self.fetch_stations_by_line(identifier)
+                except Exception as e:
+                    logger.error(f"Error fetching Rodalies line {line.code}: {e}")
+                    return []
 
-        results = await asyncio.gather(*[fetch_line_stations(line) for line in lines])
+        results = await asyncio.gather(*[fetch_safe(line) for line in lines])
         
-        for stations in results:
-            api_stations.extend(stations)
+        api_stations = [s for sublist in results for s in sublist]
             
         return api_stations
     
@@ -74,254 +80,35 @@ class RodaliesService(ServiceBase):
     # =========================================================================
 
     async def get_all_lines(self) -> List[Line]:
-        """Obtiene todas las líneas de Rodalies enriquecidas con alertas."""
         return await super().get_all_lines(TransportType.RODALIES)
     
     async def get_stations_by_line_code(self, line_code: str) -> List[Station]:           
         return await super().get_stations_by_line_code(TransportType.RODALIES, line_code)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
-        """Búsqueda difusa de estaciones por nombre."""
         return await super().get_stations_by_name(station_name, TransportType.RODALIES)
 
     async def get_station_by_code(self, station_code: str) -> Optional[Station]:
-        """
-        Busca una estación por su código (ID).
-        Usa la caché masiva de 'get_stations_by_name' para ser ultra-rápido.
-        """
         all_stations = await self.get_stations_by_name("")
         return next((s for s in all_stations if str(s.code) == str(station_code)), None)
     
     async def get_line_by_id(self, line_id: str) -> Optional[Line]:
         lines = await self.get_all_lines()
-        # Buscamos por ID (ej: R1) o ID de DB (rodalies-R1)
-        return next((l for l in lines if str(l.code) == str(line_id) or l.id == line_id), None)
+        return next((l for l in lines if str(l.code) == str(line_id) or str(l.id) == str(line_id)), None)
 
     # =========================================================================
-    # ⚡ MÉTODOS REAL-TIME / ESPECÍFICOS
+    # ⚡ MÉTODOS REAL-TIME
     # =========================================================================
 
     async def get_station_routes(self, station_code: str) -> List[LineRoute]:
-        """
-        Obtiene los próximos trenes en tiempo real.
-        """
         start = time.perf_counter()
         
-        # 1. Recuperamos la estación para asegurar que tenemos el ID correcto
-        # (A veces el frontend manda el code pero la API necesita otro ID, aquí asumimos code=id)
-        # station = await self.get_station_by_code(station_code)
-        # if not station: return []
-
-        # 2. Cache corta (10s) para tiempo real
         routes = await self._get_from_cache_or_api(
             cache_key=f"rodalies_station_{station_code}_routes",
             api_call=lambda: self.rodalies_api_service.get_next_trains_at_station(station_code),
-            cache_ttl=10
+            cache_ttl=15
         )
         
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
         return routes
-
-    async def get_rodalies_station_connections(self, station_code: str) -> Connections:
-        """
-        Devuelve las conexiones.
-        En la nueva arquitectura, esto ya viene dentro del objeto Station (campo 'connections').
-        Mantenemos este método por compatibilidad, extrayéndolo de la estación guardada.
-        """
-        station = await self.get_station_by_code(station_code)
-        if station and station.connections:
-            return station.connections
-            
-        return Connections(lines=[])
-
-
-
-'''
-from collections import defaultdict
-from typing import List
-import time
-
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
-from src.domain.models.common.line import Line
-from src.domain.models.common.line_route import LineRoute
-from src.domain.models.common.alert import Alert
-from src.domain.models.common.connections import Connections
-from src.domain.enums.transport_type import TransportType
-from src.application.services.user_data_manager import UserDataManager
-from src.infrastructure.localization.language_manager import LanguageManager
-from src.infrastructure.external.api.rodalies_api_service import RodaliesApiService
-from src.core.logger import logger
-
-
-from src.application.services.cache_service import CacheService
-from src.infrastructure.mappers.line_mapper import LineMapper
-from .service_base import ServiceBase
-
-
-class RodaliesService(ServiceBase):
-
-    def __init__(self, rodalies_api_service: RodaliesApiService, language_manager: LanguageManager, cache_service: CacheService = None, user_data_manager: UserDataManager = None):
-        super().__init__(cache_service, user_data_manager)
-        self.rodalies_api_service = rodalies_api_service
-        self.language_manager = language_manager
-        self.user_data_manager = user_data_manager        
-        logger.info(f"[{self.__class__.__name__}] RodaliesService initialized")
-
-    async def get_all_lines(self) -> List[Line]:
-        return await super().get_all_lines(TransportType.RODALIES)
-    
-    async def fetch_alerts(self) -> List[Alert]:
-        api_alerts = await self.rodalies_api_service.get_global_alerts()
-        return [Alert.map_from_rodalies_alert(a) for a in api_alerts]
-
-    async def fetch_lines(self) -> List[Line]:
-        return await self.rodalies_api_service.get_lines()
-
-    async def sync_lines(self):
-        await super().sync_lines(TransportType.RODALIES)
-
-    # === CACHE CALLS ===
-    async def get_all_lines(self) -> List[Line]:
-        start = time.perf_counter()
-        static_key = "rodalies_lines_static"
-        alerts_key = "rodalies_lines_alerts"
-
-        cached_lines = await self._get_from_cache_or_data(static_key, None, cache_ttl=3600*24)
-        cached_alerts = await self._get_from_cache_or_data(alerts_key, None, cache_ttl=3600)
-
-        if cached_lines is not None and cached_lines:
-            if cached_alerts:
-                for line in cached_lines:
-                    line_alerts = cached_alerts.get(line.name, [])
-                    line.has_alerts = any(line_alerts)
-                    line.alerts = line_alerts
-            elapsed = (time.perf_counter() - start)
-            logger.info(f"[{self.__class__.__name__}] get_all_lines (cache hit) ejecutado en {elapsed:.4f} s")
-            return cached_lines
-
-        # No lines and no alerts in cache
-        lines = await self.rodalies_api_service.get_lines()
-        api_alerts = await self.rodalies_api_service.get_global_alerts()
-        alerts = [Alert.map_from_rodalies_alert(alert) for alert in api_alerts]
-
-        result = defaultdict(list)
-        for alert in alerts:
-            await self.user_data_manager.register_alert(TransportType.RODALIES, alert)
-            seen_lines = set()
-            for entity in alert.affected_entities:
-                if entity.line_name and entity.line_name not in seen_lines:
-                    result[entity.line_name].append(alert)
-                    seen_lines.add(entity.line_name)
-
-        alerts_dict = dict(result)
-
-        for line in lines:
-            line_alerts = alerts_dict.get(line.name, [])
-            line.has_alerts = any(line_alerts)
-            line.alerts = line_alerts
-
-        await self._get_from_cache_or_data(static_key, lines, cache_ttl=3600*24)
-        await self._get_from_cache_or_data(alerts_key, alerts_dict, cache_ttl=3600)
-
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_all_lines ejecutado en {elapsed:.4f} s")
-        return lines
-
-    async def get_all_stations(self) -> List[RodaliesStation]:
-        start = time.perf_counter()
-        stations = await self.cache_service.get("rodalies_stations")
-
-        if not stations:
-            lines = await self.get_all_lines()
-            stations = []
-            for line in lines:
-                line_stations = await self.get_stations_by_line(line.id)
-                for s in line_stations:
-                    s = RodaliesStation.update_line_info(s, line)
-                stations += line_stations
-
-            await self.cache_service.set("rodalies_stations", stations, ttl=3600*24)
-
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_all_stations ejecutado en {elapsed:.4f} s")
-        return stations
-
-    async def get_station_routes(self, station_code) -> List[LineRoute]:
-        start = time.perf_counter()
-        station = await self.get_station_by_code(station_code)
-        routes = await self._get_from_cache_or_api(
-            f"rodalies_station_{station_code}_routes",
-            lambda: self.rodalies_api_service.get_next_trains_at_station(station.id),
-            cache_ttl=10
-        )
-        
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) ejecutado en {elapsed:.4f} s")
-        return routes
-
-    async def get_line_by_id(self, line_id: str) -> Line:
-        start = time.perf_counter()
-        lines = await self.get_all_lines()
-        line = next((l for l in lines if str(l.id) == str(line_id)), None)
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_line_by_id({line_id}) -> {line} ejecutado en {elapsed:.4f} s")
-        return line
-
-    # === OTHER CALLS ===
-    async def get_stations_by_line(self, line_id) -> List[RodaliesStation]:
-        start = time.perf_counter()
-        line = await self.get_line_by_id(line_id)      
-        result = line.stations
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_id}) ejecutado en {elapsed:.4f} s")
-        return result
-
-    async def get_stations_by_name(self, station_name) -> List[RodaliesStation]:
-        start = time.perf_counter()
-        stations = await self.get_all_stations()
-        if station_name == '':
-            elapsed = (time.perf_counter() - start)
-            logger.info(f"[{self.__class__.__name__}] get_stations_by_name(empty) ejecutado en {elapsed:.4f} s")
-            return stations
-        result = self.fuzzy_search(
-            query=station_name,
-            items=stations,
-            key=lambda station: station.name
-        )
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_name({station_name}) ejecutado en {elapsed:.4f} s")
-        return result
-
-    async def get_station_by_id(self, station_id) -> RodaliesStation:
-        start = time.perf_counter()
-        stops = await self.get_all_stations()
-        stop = next((s for s in stops if str(s.id) == str(station_id)), None)
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_station_by_id({station_id}) -> {stop} ejecutado en {elapsed:.4f} s")
-        return stop
-    
-    async def get_station_by_code(self, station_code) -> RodaliesStation:
-        start = time.perf_counter()
-        stops = await self.get_all_stations()
-        stop = next((s for s in stops if str(s.id) == str(station_code)), None)
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_station_by_code({station_code}) -> {stop} ejecutado en {elapsed:.4f} s")  
-        return stop
-    
-    async def get_rodalies_station_connections(self, station_code) -> Connections:
-        start = time.perf_counter()
-        connections = await self.cache_service.get(f"rodalies_station_connections_{station_code}")
-        if connections:
-            elapsed = (time.perf_counter() - start)
-            logger.info(f"[{self.__class__.__name__}] get_rodalies_station_connections({station_code}) from cache -> {len(connections)} connections (tiempo: {elapsed:.4f} s)")
-            return connections
-        
-        same_stops = [s for s in await self.get_all_stations() if s.code == station_code]
-        connections = [LineMapper.map_rodalies_connection(s.line_id, s.line_code, s.line_name, s.line_description, s.line_color) for s in same_stops]
-        await self.cache_service.set(f"rodalies_station_connections_{station_code}", connections, ttl=3600*24)
-
-        elapsed = (time.perf_counter() - start)
-        logger.info(f"[{self.__class__.__name__}] get_rodalies_station_connections({station_code}) from cache -> {len(connections)} connections (tiempo: {elapsed:.4f} s)")
-        return connections
-        '''

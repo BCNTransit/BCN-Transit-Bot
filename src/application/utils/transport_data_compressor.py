@@ -5,15 +5,11 @@ import unicodedata
 
 from typing import List, Dict, Any
 
-from src.domain.models.bus.bus_stop import BusStop
+from src.domain.models.common.station import Station
 from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
-from src.domain.models.metro.metro_station import MetroStation
 from src.domain.models.common.line import Line
-from src.domain.models.tram.tram_station import TramStation
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 from src.domain.models.bicing.bicing_station import BicingStation
-from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.enums.transport_type import TransportType
 
 from ...core.logger import logger
@@ -111,7 +107,7 @@ class TransportDataCompressor:
         ]
         return forward + reverse
 
-    def map_metro_stations(self, stations: List[MetroStation], line_id: str, line_name: str) -> str:
+    def map_metro_stations(self, stations: List[Station], line_id: str, line_name: str) -> str:
         self._log_mapping_start(TransportType.METRO.value, len(stations), line_id, line_name)
         
         stops_base = [
@@ -143,7 +139,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.METRO.value, line_id)
         return compressed
 
-    def map_bus_stops(self, stops: List[BusStop], line_id: str, line_name: str) -> str:
+    def map_bus_stops(self, stops: List[Station], line_id: str, line_name: str) -> str:
         self._log_mapping_start(TransportType.BUS.value, len(stops), line_id, line_name)
 
         data = {
@@ -167,7 +163,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.BUS.value, line_id)
         return compressed
 
-    def map_tram_stops(self, stops: List[TramStation], line_id: str, line_name: str) -> str:
+    def map_tram_stops(self, stops: List[Station], line_id: str, line_name: str) -> str:
         self._log_mapping_start(TransportType.TRAM.value, len(stops), line_id, line_name)
 
         origin = stops[0].name
@@ -201,7 +197,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.TRAM.value, line_id)
         return compressed
     
-    def map_rodalies_stations(self, stations: List[RodaliesStation], line: Line):
+    def map_rodalies_stations(self, stations: List[Station], line: Line):
         self._log_mapping_start(TransportType.RODALIES.value, len(stations), line.id, line.name)
 
         stops_base = [
@@ -259,7 +255,7 @@ class TransportDataCompressor:
         self._log_mapping_end(TransportType.BICING.value, '')
         return compressed
     
-    def map_fgc_stations(self, stations: List[FgcStation], line: Line):
+    def map_fgc_stations(self, stations: List[Station], line: Line):
         self._log_mapping_start(TransportType.FGC.value, len(stations), line.id, line.name)
 
         stops_base = [

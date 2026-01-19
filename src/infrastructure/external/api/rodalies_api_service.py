@@ -4,12 +4,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, List
 
+from src.domain.models.common.station import Station
 from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
 
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 from src.domain.models.common.line import Line
 from src.domain.models.common.line_route import LineRoute
 from src.infrastructure.mappers.line_mapper import LineMapper
@@ -62,7 +62,7 @@ class RodaliesApiService:
         line_data = await self._request("GET", f"/lines/{line_id}")
         return LineMapper.map_rodalies_line(line_data)
     
-    async def get_stations_by_line_id(self, line_id: int) -> Line:
+    async def get_stations_by_line_id(self, line_id: int) -> List[Station]:
         """Fetch a single Rodalies line by ID."""
         line_data = await self._request("GET", f"/lines/{line_id}")
         stations = []
@@ -77,7 +77,7 @@ class RodaliesApiService:
         return alerts['included']
 
     # ==== Stations ====
-    async def get_next_trains_at_station(self, station_id: int) -> List[RodaliesStation]:
+    async def get_next_trains_at_station(self, station_id: int) -> List[LineRoute]:
         """Fetch all stations for a given line."""
         next_rodalies = await self._request("GET", f"/departures?stationId={station_id}&minute=90&fullResponse=true&lang=ca")
         
