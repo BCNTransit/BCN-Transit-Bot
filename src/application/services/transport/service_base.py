@@ -417,9 +417,6 @@ class ServiceBase:
         if model.line:
             st.line_name = model.line.name
             st.line_code = model.line.code
-            # Si guardaste el emoji en la línea, recupéralo aquí también
-            if model.line.extra_data:
-                st.line_name_with_emoji = model.line.extra_data.get('name_with_emoji')
 
         # 3. Hidratar desde 'extra_data' (Fallback y campos específicos)
         if model.extra_data:
