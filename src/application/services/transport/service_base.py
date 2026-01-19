@@ -81,6 +81,16 @@ class ServiceBase:
         for model in db_stations:
             station = Station.model_validate(model)
 
+            if model.line:
+                station.line_name = model.line.name
+                station.line_code = model.line.code
+                
+                if not station.line_name:
+                    station.line_name = model.extra_data.get('line_name')
+                    
+                if not station.line_code:
+                    station.line_code = model.extra_data.get('line_code')
+
             if model.connections_data and not station.connections:
                 try:
                     station.connections = Connections.model_validate(model.connections_data)
@@ -114,6 +124,16 @@ class ServiceBase:
 
             for model in models:
                 st = Station.model_validate(model)
+
+                if model.line:
+                    st.line_name = model.line.name
+                    st.line_code = model.line.code
+                    
+                    if not st.line_name:
+                        st.line_name = model.extra_data.get('line_name')
+                        
+                    if not st.line_code:
+                        st.line_code = model.extra_data.get('line_code')
                 
                 if model.connections_data and not st.connections:
                     try:

@@ -136,8 +136,8 @@ class TramApiService:
         gtfsCode: str = "",
         latitude: float | None = None,
         longitude: float | None = None,
-        outboundCode: int | None = None,
-        returnCode: int | None = None,
+        outbound_code: int | None = None,
+        return_code: int | None = None,
         image: str = "",
         page: int = 1,
         page_size: int = 100,
@@ -149,8 +149,8 @@ class TramApiService:
             "gtfsCode": gtfsCode,
             "latitude": latitude,
             "longitude": longitude,
-            "outboundCode": outboundCode,
-            "returnCode": returnCode,
+            "outboundCode": outbound_code,
+            "returnCode": return_code,
             "image": image,
             "page": page,
             "pageSize": page_size,
@@ -205,7 +205,7 @@ class TramApiService:
         next_trams = await self._request(
             "GET",
             f"https://tram-web-service.tram.cat/api/opendata/stopTimes"
-            f"?outboundCode={outbound_code}&returnCode={return_code}",
+            f"?outbound_code={outbound_code}&return_code={return_code}",
             use_base_url=False
         )
 

@@ -28,8 +28,8 @@ class Station(BaseModel):
 
     station_group_code: Optional[int] = None
     direction: Optional[str] = None
-    outboundCode: Optional[str] = None
-    returnCode: Optional[str] = None
+    outbound_code: Optional[str] = None
+    return_code: Optional[str] = None
     moute_id: Optional[str] = None
 
     has_alerts: bool = False

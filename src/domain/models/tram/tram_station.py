@@ -6,8 +6,8 @@ from src.domain.models.common.line import Line
 
 @dataclass
 class TramStation(Station):
-    outboundCode: int
-    returnCode: int
+    outbound_code: int
+    return_code: int
     
     @staticmethod
     def update_line_info(tram_station: Station, line: Line):

@@ -105,7 +105,7 @@ class TramService(ServiceBase):
     async def get_stop_routes(self, stop_code: str) -> List[LineRoute]:
         """
         Obtiene tiempo real del Tram.
-        Requiere 'outboundCode' y 'returnCode' que deben estar en extra_data.
+        Requiere 'outbound_code' y 'return_code' que deben estar en extra_data.
         """
         start = time.perf_counter()
         
@@ -115,8 +115,8 @@ class TramService(ServiceBase):
             logger.warning(f"Stop {stop_code} not found or missing extra_data for routing")
             return []
 
-        outbound_code = stop.extra_data.get('outboundCode')
-        return_code = stop.extra_data.get('returnCode')
+        outbound_code = stop.extra_data.get('outbound_code')
+        return_code = stop.extra_data.get('return_code')
 
         if not outbound_code and not return_code:
              return []
@@ -251,7 +251,7 @@ class TramService(ServiceBase):
         stop = await self.get_stop_by_code(stop_code)
         routes = await self._get_from_cache_or_api(
             f"tram_routes_{stop_code}",
-            lambda: self.tram_api_service.get_next_trams_at_stop(stop.outboundCode, stop.returnCode),
+            lambda: self.tram_api_service.get_next_trams_at_stop(stop.outbound_code, stop.return_code),
             cache_ttl=30,
         )
         lines = await self.get_all_lines()
