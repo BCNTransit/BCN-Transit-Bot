@@ -86,7 +86,7 @@ class DistanceHelper:
 
             stops.append({
                 "type": s.transport_type.value,
-                "line_name": '',
+                "line_name": s.line_name,
                 "line_name_with_emoji": '',
                 "line_code": s.line_code,
                 "station_name": s.name,

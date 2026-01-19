@@ -84,8 +84,8 @@ class FgcService(ServiceBase):
         
         return enriched_stations
 
-    async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
-        return await self.fgc_api_service.get_stations_by_line(line_id)
+    async def fetch_stations_by_line(self, line_code: str) -> List[Station]:
+        return await self.fgc_api_service.get_stations_by_line(line_code)
 
     async def fetch_alerts(self) -> List[Alert]:
         # TODO: Implementar alertas reales de FGC si existen API

@@ -108,13 +108,13 @@ class FgcApiService:
         self._trips = pd.read_csv(StringIO(await self._request("GET", urls["trips"], use_FGC_BASE_URL=False, text=True)))
         self._stop_times = pd.read_csv(StringIO(await self._request("GET", urls["stop_times"], use_FGC_BASE_URL=False, text=True)))
 
-    async def get_stations_by_line(self, line_name: str) -> List[FgcStation]:
+    async def get_stations_by_line(self, line_code: str) -> List[FgcStation]:
         """Obtener todas las estaciones de una línea concreta con orden correcto"""
         await self._load_csvs()
 
-        route = self._routes[self._routes["route_short_name"] == line_name]
+        route = self._routes[self._routes["route_short_name"] == line_code]
         if route.empty:
-            raise ValueError(f"No se encontró la línea {line_name}")
+            raise ValueError(f"No se encontró la línea {line_code}")
         route_id = route.iloc[0]["route_id"]
 
         trips_for_route = self._trips[self._trips["route_id"] == route_id]
@@ -132,7 +132,7 @@ class FgcApiService:
         stations_df = stations_df.dropna(subset=["stop_id"])
 
         stations = [
-            StationMapper.map_fgc_station(row, line_name=line_name, order=stop_order_map[row["stop_id"]])
+            StationMapper.map_fgc_station(row, line_code=line_code, line_name=route["route_long_name"].values[0], order=stop_order_map[row["stop_id"]])
             for _, row in stations_df.iterrows()
         ]
 

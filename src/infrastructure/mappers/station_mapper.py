@@ -16,6 +16,7 @@ class StationMapper:
             name=props.get('NOM_ESTACIO', ''),
             order=props.get('ORDRE_ESTACIO', ''),
             line_code=str(props.get('CODI_LINIA', '')),
+            line_name=str(props.get('NOM_LINIA', '')),
             description=props.get('DESC_SERVEI', ''),
             latitude=coords[1],
             longitude=coords[0],
@@ -34,6 +35,7 @@ class StationMapper:
             description=props.get("DESC_PARADA", ""),
             order=props.get("ORDRE", ""),
             line_code=str(props.get('CODI_LINIA', '')),
+            line_name=str(props.get('NOM_LINIA', '')),
             direction=props.get("DESTI_SENTIT", ""),
             latitude=coords[1],
             longitude=coords[0],
@@ -41,13 +43,14 @@ class StationMapper:
         )
     
     @staticmethod
-    def map_rodalies_station(station_data, line_id, order: int = 0) -> Station:
+    def map_rodalies_station(station_data, line_code, line_name, order: int = 0) -> Station:
         return Station(
             id=str(station_data["id"]),
             code=str(station_data["id"]),
             order=order,
             name=station_data["name"],
-            line_code=line_id,
+            line_code=line_code,
+            line_name=line_name,
             description=None,
             latitude=station_data["latitude"],
             longitude=station_data["longitude"],
@@ -55,7 +58,7 @@ class StationMapper:
         )
     
     @staticmethod
-    def map_tram_station(props: dict, line_id):
+    def map_tram_station(props: dict, line_code):
         return Station(
             id=str(props.get('id', '')),
             code=str(props.get('gtfsCode','')),
@@ -67,18 +70,20 @@ class StationMapper:
             latitude=props.get('latitude', ''),
             longitude=props.get('longitude', ''),
             transport_type=TransportType.TRAM,
-            line_code=str(line_id),
+            line_code=str(line_code),
+            line_name=str(line_code)
         )
     
     @staticmethod
-    def map_fgc_station(station_data, line_name, order):
+    def map_fgc_station(station_data, line_code, line_name, order):
         return Station(
             id=str(station_data["stop_id"]),
             code=str(station_data["stop_id"]),
             name=station_data["stop_name"],
             latitude=float(station_data["stop_lat"]),
             longitude=float(station_data["stop_lon"]),
-            line_code=line_name,
+            line_code=line_code,
+            line_name=line_name,
             moute_id=str(station_data.get("moute_id")),
             order=order,
             transport_type=TransportType.FGC

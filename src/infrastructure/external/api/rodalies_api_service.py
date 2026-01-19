@@ -67,7 +67,7 @@ class RodaliesApiService:
         line_data = await self._request("GET", f"/lines/{line_id}")
         stations = []
         stations.extend(
-            StationMapper.map_rodalies_station(station_data, line_data.get('id'), i)
+            StationMapper.map_rodalies_station(station_data, line_code=line_data.get('id'), line_name=line_data.get('name'), order=i)
             for i, station_data in enumerate(line_data["stations"], start = 1)
         )
         return stations

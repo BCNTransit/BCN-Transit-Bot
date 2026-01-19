@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Optional, List, TYPE_CHECKING
 from pydantic import BaseModel, computed_field, Field, ConfigDict
 
-from src.domain.models.common.station_summary import StationSummary
 from src.domain.enums.transport_type import TransportType
 
 if TYPE_CHECKING:

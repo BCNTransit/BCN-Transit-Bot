@@ -24,6 +24,7 @@ class Station(BaseModel):
     
     description: Optional[str] = None
     line_code: Optional[str] = None
+    line_name: Optional[str] = None
 
     station_group_code: Optional[int] = None
     direction: Optional[str] = None

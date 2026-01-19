@@ -162,40 +162,7 @@ class TramApiService:
 
         stops = []
         stops.extend(StationMapper.map_tram_station(stop, line_id) for stop in api_stops)
-        return stops
-
-    async def get_stops(
-        self,
-        name: str = "",
-        description: str = "",
-        gtfsCode: str = "",
-        latitude: float | None = None,
-        longitude: float | None = None,
-        outboundCode: int | None = None,
-        returnCode: int | None = None,
-        image: str = "",
-        page: int = 1,
-        page_size: int = 100,
-        sort: str = ""
-    ) -> List[TramStation]:
-        params = {
-            "name": name,
-            "description": description,
-            "gtfsCode": gtfsCode,
-            "latitude": latitude,
-            "longitude": longitude,
-            "outboundCode": outboundCode,
-            "returnCode": returnCode,
-            "image": image,
-            "page": page,
-            "pageSize": page_size,
-            "sort": sort
-        }
-        params = {k: v for k, v in params.items() if v is not None}
-        api_stops = await self._request("GET", "/stops", params=params)
-        stops = []
-        stops.extend(StationMapper.map_tram_station(stop) for stop in api_stops)
-        return stops
+        return stops    
 
     async def get_connections_at_stop(
         self,
