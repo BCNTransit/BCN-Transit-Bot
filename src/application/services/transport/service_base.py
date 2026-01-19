@@ -64,8 +64,8 @@ class ServiceBase:
     async def get_stations_by_line_code(self, transport_type: TransportType, line_code: str) -> List[Station]:
         start = time.perf_counter()
 
+        # Lanzamos tareas en paralelo (DB y Cache de Alertas)
         stations_task = self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_code}")
-        
         alerts_key = f"{transport_type.value}_alerts_map"
         alerts_task = self._get_alerts_map(transport_type, alerts_key)
 
@@ -76,31 +76,10 @@ class ServiceBase:
 
         final_stations = []
         
-        from src.domain.models.common.connections import Connections
-
         for model in db_stations:
-            station = Station.model_validate(model)
+            station = self._map_db_to_domain(model)
 
-            if model.line:
-                station.line_name = model.line.name
-                station.line_code = model.line.code
-                
-                if not station.line_name:
-                    station.line_name = model.extra_data.get('line_name')
-                    
-                if not station.line_code:
-                    station.line_code = model.extra_data.get('line_code')
-
-            if model.connections_data and not station.connections:
-                try:
-                    station.connections = Connections.model_validate(model.connections_data)
-                except Exception as e:
-                    logger.warning(f"Error parseando conexiones estación {station.code}: {e}")
-
-            station_alerts = []            
-            if station.name in alerts_dict:
-                station_alerts.extend(alerts_dict[station.name])
-
+            station_alerts = alerts_dict.get(station.name, [])
             station.has_alerts = len(station_alerts) > 0
             station.alerts = station_alerts
 
@@ -116,40 +95,20 @@ class ServiceBase:
         
         cache_key = f"all_stations_{transport_type.value}"
 
+        # Función interna para cachear
         async def fetch_and_map_all_stations():
             models = await self.stations_repository.get_by_transport_type(transport_type.value)
-            
-            mapped_stations = []
-            from src.domain.models.common.connections import Connections
+            # ✅ USAMOS EL HELPER (Comprensión de lista limpia)
+            return [self._map_db_to_domain(model) for model in models]
 
-            for model in models:
-                st = Station.model_validate(model)
-
-                if model.line:
-                    st.line_name = model.line.name
-                    st.line_code = model.line.code
-                    
-                    if not st.line_name:
-                        st.line_name = model.extra_data.get('line_name')
-                        
-                    if not st.line_code:
-                        st.line_code = model.extra_data.get('line_code')
-                
-                if model.connections_data and not st.connections:
-                    try:
-                        st.connections = Connections.model_validate(model.connections_data)
-                    except Exception:
-                        pass
-                
-                mapped_stations.append(st)
-            return mapped_stations
-
+        # 1. Obtener todas (Cache o DB)
         all_stations = await self._get_from_cache_or_api(
             cache_key=cache_key,
             api_call=fetch_and_map_all_stations,
-            cache_ttl=86400
+            cache_ttl=86400 # 24 horas
         )
 
+        # 2. Filtrar
         if not station_name:
             result = all_stations
         else:
@@ -445,3 +404,43 @@ class ServiceBase:
 
         # Use the generic method to cache and return
         return await self._get_from_cache_or_data(cache_key, data, cache_ttl)
+    
+    def _map_db_to_domain(self, model) -> Station:
+        """
+        Convierte un StationModel (SQLAlchemy) a Station (Pydantic),
+        rellenando datos desde relaciones y extra_data.
+        """
+        # 1. Validación base
+        st = Station.model_validate(model)
+
+        # 2. Hidratar desde la Relación 'Line' (JOIN)
+        if model.line:
+            st.line_name = model.line.name
+            st.line_code = model.line.code
+            # Si guardaste el emoji en la línea, recupéralo aquí también
+            if model.line.extra_data:
+                st.line_name_with_emoji = model.line.extra_data.get('name_with_emoji')
+
+        # 3. Hidratar desde 'extra_data' (Fallback y campos específicos)
+        if model.extra_data:
+            # Fallback de línea
+            if not st.line_name: st.line_name = model.extra_data.get('line_name')
+            if not st.line_code: st.line_code = model.extra_data.get('line_code')
+            
+            # IDs Específicos (Rodalies/FGC/Tram)
+            # 🛑 CORREGIDO: Antes asignabas todo a moute_id por error
+            if not st.moute_id:      st.moute_id = model.extra_data.get('moute_id')
+            if not st.outbound_code: st.outbound_code = model.extra_data.get('outboundCode')
+            if not st.return_code:   st.return_code = model.extra_data.get('returnCode')
+            if not st.station_group_code: st.station_group_code = model.extra_data.get('station_group_code')
+
+        # 4. Hidratar Conexiones
+        if model.connections_data and not st.connections:
+            try:
+                # Importación local para evitar ciclos
+                from src.domain.models.common.connections import Connections
+                st.connections = Connections.model_validate(model.connections_data)
+            except Exception as e:
+                logger.warning(f"Error parsing connections for {st.code}: {e}")
+
+        return st
