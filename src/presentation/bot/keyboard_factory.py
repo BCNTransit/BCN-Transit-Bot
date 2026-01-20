@@ -2,13 +2,11 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from typing import List
 
+from src.domain.models.common.station import Station
 from src.domain.models.common.line import Line
 from src.domain.schemas.favorite import FavoriteResponse as FavoriteItem
-from src.domain.models.metro.metro_station import MetroStation
 from src.domain.models.metro.metro_access import MetroAccess
-from src.domain.models.fgc.fgc_station import FgcStation
 from src.domain.models.common.line import Line
-from src.domain.models.tram.tram_station import TramStation
 from src.domain.enums.callbacks import Callbacks
 from src.domain.enums.transport_type import TransportType
 
@@ -145,7 +143,7 @@ class KeyboardFactory:
 
     # === STATIONS / STOPS ===
 
-    def metro_stations_menu(self, metro_stations: List[MetroStation], line_id):
+    def metro_stations_menu(self, metro_stations: List[Station], line_id):
         buttons = [
             InlineKeyboardButton(f"{metro_station.order}. {metro_station.name} {'⚠️' if metro_station.has_alerts else ''}  ", callback_data=Callbacks.METRO_STATION.format(line_code=line_id, station_code=metro_station.code))
             for metro_station in metro_stations
@@ -153,7 +151,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(buttons, 2)
         return InlineKeyboardMarkup(rows)
     
-    def tram_stops_menu(self, tram_stops: List[TramStation], line_id):
+    def tram_stops_menu(self, tram_stops: List[Station], line_id):
         buttons = [
             InlineKeyboardButton(f"{tram_stop.order}. {tram_stop.name}  ", callback_data=Callbacks.TRAM_STATION.format(line_code=line_id, station_code=tram_stop.id))
             for tram_stop in tram_stops
@@ -161,7 +159,7 @@ class KeyboardFactory:
         rows = self._chunk_buttons(buttons, 2)
         return InlineKeyboardMarkup(rows)
     
-    def fgc_stations_menu(self, fgc_stations: List[FgcStation], line_id):
+    def fgc_stations_menu(self, fgc_stations: List[Station], line_id):
         buttons = [
             InlineKeyboardButton(f"{fgc_station.order}. {fgc_station.name} {'⚠️' if fgc_station.has_alerts else ''}  ", callback_data=Callbacks.FGC_STATION.format(line_code=line_id, station_code=fgc_station.id))
             for fgc_station in fgc_stations

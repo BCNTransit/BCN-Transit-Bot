@@ -1,13 +1,9 @@
 import math
 import time
 from typing import List, Optional, Tuple, Dict
-from src.domain.models.bus.bus_stop import BusStop
+from src.domain.models.common.station import Station
 from src.domain.models.common.location import Location
-from src.domain.models.metro.metro_station import MetroStation
-from src.domain.models.tram.tram_station import TramStation
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 from src.domain.models.bicing.bicing_station import BicingStation
-from src.domain.models.fgc.fgc_station import FgcStation
 from src.core.logger import logger
 
 class DistanceHelper:
@@ -40,15 +36,11 @@ class DistanceHelper:
             return f"{int(distance_km * 1000)}m"
         else:
             return f"{distance_km:.1f}km"
-
+        
     @staticmethod
     def build_stops_list(
-        metro_stations: List[MetroStation],
-        bus_stops: List[BusStop],
-        tram_stops: List[TramStation],
-        rodalies_stations: List[RodaliesStation],
+        stations: List[Station],
         bicing_stations: List[BicingStation],
-        fgc_stations: List[FgcStation],
         user_location: Optional[Location] = None,
         results_to_return: int = 50,
         max_distance_km: float = 1000
@@ -59,7 +51,6 @@ class DistanceHelper:
         if user_location and results_to_return == 50:
             results_to_return = 10
 
-        # Bounding box para filtrar paradas fuera del radio
         if user_location:
             min_lat, max_lat, min_lon, max_lon = DistanceHelper.bounding_box(
                 user_location.latitude, user_location.longitude, max_distance_km
@@ -81,43 +72,26 @@ class DistanceHelper:
                 return min_lat <= lat_float <= max_lat and min_lon <= lon_float <= max_lon
             except ValueError:
                 return False
-
-        # --- Procesa todas las listas ---
-        for m in metro_stations:
-            if not within_bbox(m.latitude, m.longitude):
+            
+        for s in stations:
+            if not within_bbox(s.latitude, s.longitude):
                 continue
+
             distance_km = DistanceHelper.haversine_distance(
-                m.latitude, m.longitude, user_location.latitude, user_location.longitude
+                s.latitude, s.longitude, user_location.latitude, user_location.longitude
             ) if user_location else None
+
             if distance_km is not None and distance_km > max_distance_km:
                 continue
-            stops.append({
-                "type": "metro",
-                "line_name": m.line_name,
-                "line_name_with_emoji": m.line_name_with_emoji,
-                "line_code": m.line_code,
-                "station_name": m.name,
-                "station_code": m.code,
-                "coordinates": (m.latitude, m.longitude),
-                "distance_km": distance_km
-            })
 
-        for t in tram_stops + rodalies_stations + fgc_stations:
-            if not within_bbox(t.latitude, t.longitude):
-                continue
-            distance_km = DistanceHelper.haversine_distance(
-                t.latitude, t.longitude, user_location.latitude, user_location.longitude
-            ) if user_location else None
-            if distance_km is not None and distance_km > max_distance_km:
-                continue
             stops.append({
-                "type": "tram" if isinstance(t, TramStation) else "rodalies" if isinstance(t, RodaliesStation) else "fgc",                
-                "line_name": t.line_name,
-                "line_name_with_emoji": t.line_name_with_emoji,
-                "line_code": t.line_code,
-                "station_name": t.name,
-                "station_code": t.code,
-                "coordinates": (t.latitude, t.longitude),
+                "type": s.transport_type.value,
+                "line_name": s.line_name,
+                "line_name_with_emoji": '',
+                "line_code": s.line_code,
+                "station_name": s.name,
+                "station_code": s.code,
+                "coordinates": (s.latitude, s.longitude),
                 "distance_km": distance_km
             })
 
@@ -143,25 +117,8 @@ class DistanceHelper:
                 "distance_km": distance_km
             })
 
-        for b in bus_stops:
-            if not within_bbox(b.latitude, b.longitude):
-                continue
-            distance_km = DistanceHelper.haversine_distance(
-                b.latitude, b.longitude, user_location.latitude, user_location.longitude
-            ) if user_location else None
-            if distance_km is not None and distance_km > max_distance_km:
-                continue
-            if not any(stop.get("station_code") == b.code and stop.get("type") == "bus" for stop in stops):
-                stops.append({
-                    "type": "bus",
-                    "line_code": b.line_code,
-                    "station_name": b.name,
-                    "station_code": b.code,
-                    "coordinates": (b.latitude, b.longitude),
-                    "distance_km": distance_km
-                })
-
         stops.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"]))
         elapsed = time.perf_counter() - start
         logger.info(f"[DistanceHelper] build_stops_list ejecutado en {elapsed:.4f} s | {len(stops)} stops encontrados")
         return stops[:results_to_return]
+

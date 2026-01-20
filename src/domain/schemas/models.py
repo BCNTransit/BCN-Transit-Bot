@@ -61,10 +61,6 @@ class Favorite(Base):
 # DATOS DE SERVICIO (TMB/RODALIES)
 # ----------------------------
 class ServiceIncident(Base):
-    """
-    Guarda los datos de tu tabla 'ALERTS' (los avisos globales del servicio).
-    Usamos JSONB para guardar 'PUBLICATIONS' y 'AFFECTED_ENTITIES' tal cual vienen.
-    """
     __tablename__ = "service_incidents"
 
     id = Column(Integer, primary_key=True)
@@ -139,10 +135,34 @@ class LineModel(Base):
     origin = Column(String, nullable=True)
     destination = Column(String, nullable=True)
     color = Column(String, nullable=False)
-    
     transport_type = Column(String, nullable=False)
     extra_data = Column(JSON, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('original_id', 'transport_type', name='uq_original_id_transport'),
     )
+
+# ----------------------------
+# STATIONS
+# ----------------------------
+class StationModel(Base):
+    __tablename__ = "stations"
+
+    id = Column(String, primary_key=True, index=True)    
+    original_id = Column(String, index=True)
+    
+    code = Column(String, index=True)
+    name = Column(String)
+    description = Column(String, nullable=True)
+    
+    latitude = Column(Float)
+    longitude = Column(Float)
+    order = Column(Integer)
+    
+    transport_type = Column(String, index=True)
+
+    line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True)
+    line = relationship("LineModel", backref="stations_rel")
+
+    connections_data = Column(JSON, nullable=True) 
+    extra_data = Column(JSON, nullable=True)

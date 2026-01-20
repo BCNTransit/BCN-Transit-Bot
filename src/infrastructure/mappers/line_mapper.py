@@ -1,7 +1,6 @@
 from typing import Any, Dict, List
 from src.domain.models.common.line import Line
 from src.domain.enums.transport_type import TransportType
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 
 class LineMapper:
 
@@ -73,7 +72,7 @@ class LineMapper:
         )
     
     @staticmethod
-    def map_rodalies_line(data: Dict[str, Any], stations: List[RodaliesStation]) -> Line:
+    def map_rodalies_line(data: Dict[str, Any]) -> Line:
         return Line(
             id=str(data["id"]),
             code=str(data["id"]),
@@ -82,7 +81,6 @@ class LineMapper:
             transport_type=TransportType.RODALIES,
             origin=data.get("originStation", {}).get("name", ""),
             destination=data.get("destinationStation", {}).get("name", ""),
-            stations=stations,
         )
     
     @staticmethod

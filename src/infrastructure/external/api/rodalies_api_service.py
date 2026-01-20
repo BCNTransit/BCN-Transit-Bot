@@ -4,11 +4,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, List
 
+from src.domain.models.common.station import Station
+from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.enums.transport_type import TransportType
 from src.core.logger import logger
 
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
-from src.domain.models.rodalies.rodalies_station import RodaliesStation
 from src.domain.models.common.line import Line
 from src.domain.models.common.line_route import LineRoute
 from src.infrastructure.mappers.line_mapper import LineMapper
@@ -43,39 +44,40 @@ class RodaliesApiService:
                 return await resp.json()
 
     # ==== Lines ====
-    async def get_lines(self, type: str = "RODALIES"):
+    async def get_lines(self, type: str = "RODALIES") -> List[Line]:
         """Fetch all Rodalies lines."""
 
         lines = []
         for type in ["RODALIES", "REGIONAL"]:
             data = await self._request("GET", f"/lines?type={type}&page=0&limit=100&lang=ca", params=None)
 
-            for line_data in data["included"]:
-                stations = []
-                stations.extend(
-                    RodaliesStation.create_rodalies_station(station_data)
-                    for station_data in line_data["stations"]
-                )
-                lines.append(LineMapper.map_rodalies_line(line_data, stations))
-
+            lines.extend(
+                LineMapper.map_rodalies_line(line_data)
+                for line_data in data["included"]
+            )
         return lines
 
     async def get_line_by_id(self, line_id: int) -> Line:
         """Fetch a single Rodalies line by ID."""
         line_data = await self._request("GET", f"/lines/{line_id}")
+        return LineMapper.map_rodalies_line(line_data)
+    
+    async def get_stations_by_line_id(self, line_id: int) -> List[Station]:
+        """Fetch a single Rodalies line by ID."""
+        line_data = await self._request("GET", f"/lines/{line_id}")
         stations = []
         stations.extend(
-            RodaliesStation.create_rodalies_station(station_data)
-            for station_data in line_data["stations"]
+            StationMapper.map_rodalies_station(station_data, line_code=line_data.get('id'), line_name=line_data.get('name'), order=i)
+            for i, station_data in enumerate(line_data["stations"], start = 1)
         )
-        return Line.create_rodalies_line(line_data, stations)
+        return stations
 
     async def get_global_alerts(self):
         alerts = await self._request("GET", "/notices?limit=500&sort=date,desc&sort=time,desc")
         return alerts['included']
 
     # ==== Stations ====
-    async def get_next_trains_at_station(self, station_id: int) -> List[RodaliesStation]:
+    async def get_next_trains_at_station(self, station_id: int) -> List[LineRoute]:
         """Fetch all stations for a given line."""
         next_rodalies = await self._request("GET", f"/departures?stationId={station_id}&minute=90&fullResponse=true&lang=ca")
         

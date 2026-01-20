@@ -114,7 +114,7 @@ class Alert:
             for entity in metro_alert.get('entities')
         )
         return Alert(
-            id=metro_alert.get('id'),
+            id=str(metro_alert.get('id')),
             transport_type=TransportType.METRO,
             begin_date=datetime.fromtimestamp(metro_alert.get('disruption_dates')[0].get('begin_date', None) / 1000) if metro_alert.get('disruption_dates')[0].get('begin_date', None) else None,
             end_date=datetime.fromtimestamp(metro_alert.get('disruption_dates')[0].get('end_date', None) / 1000) if metro_alert.get('disruption_dates')[0].get('end_date', None) else None,
@@ -156,7 +156,7 @@ class Alert:
                     for stop in way.get('stops')
                 )
         return Alert(
-            id=bus_alert.get('id'),
+            id=str(bus_alert.get('id')),
             transport_type=TransportType.BUS,
             begin_date=datetime.fromtimestamp(bus_alert.get('begin') / 1000),
             end_date=datetime.fromtimestamp(bus_alert.get('end') / 1000),
@@ -197,7 +197,7 @@ class Alert:
             for entity in rodalies_alert.get('lines')
         )
         return Alert(
-            id=rodalies_alert.get('externalId'),
+            id=str(rodalies_alert.get('externalId')),
             transport_type=TransportType.RODALIES,
             begin_date=datetime.fromisoformat(rodalies_alert.get('date')),
             end_date=None,
@@ -240,7 +240,7 @@ class Alert:
         )
 
         return Alert(
-            id=tram_alert.get('id'),
+            id=str(tram_alert.get('id')),
             transport_type=TransportType.TRAM,
             begin_date=datetime.fromtimestamp(alert_content.get('active_period')[0]['start']) if alert_content.get('active_period') else None,
             end_date=None,

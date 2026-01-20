@@ -1,12 +1,12 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from src.domain.models.common.station import Station
 from src.application.services.message_service import MessageService
 from src.application.services.telegraph_service import TelegraphService
 from src.application.services.transport.bus_service import BusService
 from src.application.services.update_manager import UpdateManager
 from src.application.services.user_data_manager import UserDataManager, audit_action
-from src.domain.models.bus.bus_stop import BusStop
 from src.domain.models.common.line_route import LineRoute
 from src.domain.enums.callbacks import Callbacks
 from src.domain.enums.transport_type import TransportType
@@ -81,7 +81,7 @@ class BusHandler(HandlerBase):
         default_callback = Callbacks.BUS_STATION.format(line_code=line_id, station_code=bus_stop_code)
 
         bus_stop = await self.bus_service.get_stop_by_code(bus_stop_code)
-        station_alerts = BusStop.get_alert_by_language(bus_stop, await self.user_data_manager.get_user_language(user_id))
+        station_alerts = Station.get_alert_by_language(bus_stop, await self.user_data_manager.get_user_language(user_id))
         alerts_message = f"{self.language_manager.t("common.alerts")}\n{station_alerts}\n\n" if any(station_alerts) else ""
         
         message = await self.show_stop_intro(update, context, TransportType.BUS.value, line_id, bus_stop_code, bus_stop.name)

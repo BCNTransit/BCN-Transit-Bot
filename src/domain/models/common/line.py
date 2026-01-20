@@ -4,10 +4,7 @@ from pydantic import BaseModel, computed_field, Field, ConfigDict
 
 from src.domain.enums.transport_type import TransportType
 
-# ✅ SOLO importamos Station y Alert para el IDE (Static Type Checking)
-# En tiempo de ejecución, Python ignorará esto, rompiendo el ciclo de importación.
 if TYPE_CHECKING:
-    from src.domain.models.common.station import Station
     from src.domain.models.common.alert import Alert
 
 class Line(BaseModel):
@@ -23,9 +20,7 @@ class Line(BaseModel):
     destination: Optional[str] = None
     color: Optional[str] = None 
     transport_type: TransportType
-    category: Optional[str] = None 
-    
-    stations: List["Station"] = Field(default_factory=list)    
+    category: Optional[str] = None
     
     has_alerts: bool = False
     alerts: List["Alert"] = Field(default_factory=list)

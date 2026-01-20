@@ -1,4 +1,5 @@
 
+from src.domain.models.common.station import Station
 from src.domain.models.common.line_route import LineRoute
 from src.domain.enums.transport_type import TransportType
 from telegram import Update
@@ -9,7 +10,6 @@ from src.application.services.transport.metro_service import MetroService
 from src.application.services.message_service import MessageService
 from src.application.services.update_manager import UpdateManager
 from src.application.services.user_data_manager import UserDataManager, audit_action
-from src.domain.models.metro.metro_station import MetroStation
 from src.presentation.bot.keyboard_factory import KeyboardFactory
 
 from src.infrastructure.localization.language_manager import LanguageManager
@@ -86,7 +86,7 @@ class MetroHandler(HandlerBase):
         message = await self.show_stop_intro(update, context, TransportType.METRO.value, line_id, station_code, station.name)
 
         await self.metro_service.get_station_routes(station_code)
-        station_alerts = MetroStation.get_alert_by_language(station, await self.user_data_manager.get_user_language(user_id))
+        station_alerts = Station.get_alert_by_language(station, await self.user_data_manager.get_user_language(user_id))
         station_connections = await self.metro_service.get_station_connections(station.code)
         alerts_message = f"{self.language_manager.t("common.alerts")}\n{station_alerts}\n\n" if any(station_alerts) else ""
 
@@ -123,7 +123,7 @@ class MetroHandler(HandlerBase):
         # 2. Obtener datos necesarios de la callback
         _, line_id, station_code = self.message_service.get_callback_data(update)
         station = await self.metro_service.get_station_by_code(station_code)        
-        station_accesses = await self.metro_service.get_station_accesses(station.CODI_GRUP_ESTACIO)
+        station_accesses = await self.metro_service.get_station_accesses(station.station_group_code)
         station_alerts = MetroStation.get_alert_by_language(station, await self.user_data_manager.get_user_language(user_id))
         station_connections = await self.metro_service.get_station_connections(station.code)
         alerts_message = f"{self.language_manager.t("common.alerts")}\n{station_alerts}\n\n" if any(station_alerts) else ""

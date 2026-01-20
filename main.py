@@ -8,6 +8,7 @@ from telegram.ext import (
     MessageHandler, filters
 )
 
+from src.application.services.connections_generator import ConnectionsGenerator
 from src.core.logger import logger
 
 from src.presentation.api.server import create_app
@@ -51,9 +52,11 @@ from src.infrastructure.external.api.bicing_api_service import BicingApiService
 from src.infrastructure.external.api.fgc_api_service import FgcApiService
 
 from src.infrastructure.localization.language_manager import LanguageManager
-from src.infrastructure.database.database import init_db
-from src.infrastructure.database.seeders.lines_seeder import seed_lines
+from src.infrastructure.database.database import init_db, reset_transport_data
 from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
+from src.infrastructure.database.seeders.lines_seeder import seed_lines, seed_stations
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 class BotApp:
@@ -63,6 +66,8 @@ class BotApp:
     """
 
     def __init__(self):
+        self.scheduler = AsyncIOScheduler()
+
         self.telegram_token = None
         self.telegraph_token = None
         self.bot = None
@@ -184,57 +189,21 @@ class BotApp:
         logger.info("Handlers initialized")
 
     async def run_seeder(self):
-        logger.info("Initializing Seeder...")
-        total_start = datetime.now()
-        
+        await reset_transport_data()
         await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+        await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
 
-        service_times = []
-
-        preload_tasks = [
-            ("Metro", self.metro_service, ["get_all_stations"]),
-            ("Bus", self.bus_service, ["get_all_stops"]),
-            ("Tram", self.tram_service, ["get_all_stops"]),
-            ("Rodalies", self.rodalies_service, ["get_all_stations"]),
-            ("FGC", self.fgc_service, ["get_all_stations"])
-        ]
-
+    async def run_seeder_job(self):
+        """Wrapper para el job del scheduler con logs"""
+        logger.info("🕐 Ejecutando tarea programada: SEEDER DIARIO...")
         try:
-            async def run_service(name, service, methods):
-                start = datetime.now()
-                tasks = []
-                for method_name in methods:
-                    method = getattr(service, method_name)
-                    tasks.append(asyncio.create_task(method()))
-                
-                for task in asyncio.as_completed(tasks):
-                    try:
-                        await task
-                    except Exception as e:
-                        logger.error(f"There was an error running the '{name}' seeder: \n{e}")
-                
-                elapsed = int((datetime.now() - start).total_seconds())
-                return name, elapsed
-
-            all_tasks = [run_service(name, service, methods) for name, service, methods in preload_tasks]
-            results = await asyncio.gather(*all_tasks)
-            service_times.extend(results)
-
-            total_elapsed = int((datetime.now() - total_start).total_seconds())
-            total_minutes, total_seconds = divmod(total_elapsed, 60)
-            logger.info(
-                f"Seeder completed in {total_minutes}m {total_seconds}s" if total_minutes > 0 else f"Seeder completed in {total_seconds}s"
-            )
-
-            for name, elapsed in service_times:
-                minutes, seconds = divmod(elapsed, 60)
-                logger.info(
-                    f"{name} seeder finalized in {minutes}m {seconds}s" if minutes > 0 else f"{name} seeder finalized in {seconds}s"
-                )
-
+            await self.run_seeder()            
+            generator = ConnectionsGenerator()
+            await generator.generate_and_save_connections()
+            
+            logger.info("✅ Seeder diario finalizado con éxito.")
         except Exception as e:
-            logger.error(f"Error running seeder: {e}")
-            raise
+            logger.error(f"❌ Error en el seeder diario: {e}")
 
     def register_handlers(self):
         """Register Telegram handlers."""
@@ -303,9 +272,10 @@ class BotApp:
 
     async def run(self):
         """Main async entrypoint for the bot."""
-        await init_db()       
-        await self.run_seeder()         
+        await init_db()
         initialize_firebase_app()
+        self.scheduler.add_job(self.run_seeder_job, 'cron', hour=4, minute=0)
+        self.scheduler.start()
 
         self.application = ApplicationBuilder().token(self.telegram_token).build()
         self.register_handlers()
@@ -331,6 +301,10 @@ class BotApp:
         finally:
             # Cleanup
             logger.info("Stopping bot...")
+
+            if self.scheduler.running:
+                self.scheduler.shutdown()
+
             if self.alerts_service:
                 await self.alerts_service.stop()
 

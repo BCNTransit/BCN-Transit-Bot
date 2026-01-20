@@ -13,9 +13,7 @@ class UpdateManager:
 
     def __init__(self, message_service: MessageService):
         self.message_service = message_service
-        # user_id -> asyncio.Task
         self.tasks: dict[int, asyncio.Task] = {}
-        # user_id -> message_id (for loading animations)
         self.loading_messages: dict[int, int] = {}
         logger.info(f"[{self.__class__.__name__}] Initialized")
 

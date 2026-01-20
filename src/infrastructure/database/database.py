@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
@@ -40,10 +41,24 @@ async def get_db():
 
 async def init_db():
     async with engine.begin() as conn:
-        import src.domain.schemas.models as models
-
-        # print("[Database] Borrando tablas existentes...")
-        # await conn.run_sync(Base.metadata.drop_all)
+        import src.domain.schemas.models
         
         await conn.run_sync(Base.metadata.create_all)
         print("[Database] Tablas inicializadas correctamente.")
+
+async def reset_transport_data():
+    """
+    Limpia las tablas de líneas y estaciones para asegurar una carga limpia.
+    Usa TRUNCATE CASCADE para borrar datos y reiniciar IDs.
+    """
+    print("🧹 Limpiando base de datos (Lines & Stations)...")
+    
+    async with async_session_factory() as session:
+        try:
+            await session.execute(text("TRUNCATE TABLE stations, lines RESTART IDENTITY CASCADE;"))
+            
+            await session.commit()
+            print("✨ Tablas limpias.")
+        except Exception as e:
+            print(f"❌ Error limpiando tablas: {e}")
+            await session.rollback()

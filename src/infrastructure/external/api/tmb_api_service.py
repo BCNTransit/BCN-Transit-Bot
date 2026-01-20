@@ -6,15 +6,15 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
+from src.domain.models.common.station import Station
+from src.infrastructure.mappers.station_mapper import StationMapper
 from src.domain.models.common.line import Line
 from src.domain.models.common.next_trip import NextTrip, normalize_to_seconds
 from src.domain.models.common.line_route import LineRoute
 from src.domain.models.common.connections import Connections
 
-from src.domain.models.metro.metro_station import MetroStation
 from src.domain.models.metro.metro_access import MetroAccess
 
-from src.domain.models.bus.bus_stop import BusStop
 from src.domain.models.common.line import Line
 
 from src.domain.enums.transport_type import TransportType
@@ -67,24 +67,6 @@ class TmbApiService:
             async with session.get(endpoint, params=merged_params) as resp:
                 resp.raise_for_status()
                 return await resp.json()
-            
-    async def fetch_transit_items(self, url: str, model_class, *, filter_fn=None, sort_key=None, factory_fn=None):
-        data = await self._get(url)
-        features = data['features']
-
-        items = []
-        for feature in features:
-            props = feature['properties']
-            if filter_fn is None or filter_fn(props):
-                if factory_fn:
-                    item = factory_fn(feature)
-                else:
-                    item = model_class(**props)
-                items.append(item)
-
-        if sort_key:
-            items.sort(key=sort_key)
-        return items, data
     
     async def get_bus_lines(self) -> List[Line]:   
         url = f'{self.BASE_URL_TRANSIT}/linies/bus'
@@ -96,26 +78,11 @@ class TmbApiService:
         lines.sort(key=self._natural_key)
         return lines
 
-    async def get_bus_line_stops(self, line_code) -> List[BusStop]:
+    async def get_bus_line_stops(self, line_code) -> List[Station]:
         url = f'{self.BASE_URL_TRANSIT}/linies/bus/{line_code}/parades'
-
-        from_origin, _ = await self.fetch_transit_items(
-            url,
-            BusStop,
-            filter_fn=lambda props: props['ID_SENTIT'] == 1,
-            sort_key=lambda x: x.order,
-            factory_fn=BusStop.create_bus_stop
-        )
-
-        from_destination, _ = await self.fetch_transit_items(
-            url,
-            BusStop,
-            filter_fn=lambda props: props['ID_SENTIT'] == 2,
-            sort_key=lambda x: x.order,
-            factory_fn=BusStop.create_bus_stop
-        )
-
-        return from_origin + from_destination
+        data = await self._get(url)
+        features = data['features']
+        return [StationMapper.map_bus_stop(s) for s in features]
 
     async def get_metro_lines(self) -> List[Line]:
         url = f'{self.BASE_URL_TRANSIT}/linies/metro'
@@ -126,35 +93,14 @@ class TmbApiService:
         lines.extend(LineMapper.map_metro_line(feature) for feature in features if feature['properties']['NOM_LINIA'] and "FM" not in feature['properties']['NOM_LINIA'])
         lines.sort(key=lambda x: x.name)
         return lines
-    
-    async def get_metro_stations(self) -> List[MetroStation]:
-        url = f'{self.BASE_URL_TRANSIT}/estacions'
-        data = await self._get(url)
 
-        features = data['features']
-
-        stations = []
-        stations.extend(MetroStation.create_metro_station(feature) for feature in features)
-        stations.sort(key=lambda x: x.order)
-        return stations
-    
-    async def get_bus_stops(self) -> List[BusStop]:
-        url = f'{self.BASE_URL_TRANSIT}/parades'
-        data = await self._get(url)
-        features = data['features']
-
-        stations = []
-        stations.extend(BusStop.create_bus_stop(feature) for feature in features)
-        stations.sort(key=lambda x: x.ORDRE_LINIA)
-        return stations
-
-    async def get_stations_by_metro_line(self, line) -> List[MetroStation]:
+    async def get_stations_by_metro_line(self, line) -> List[Station]:
         url = f'{self.BASE_URL_TRANSIT}/linies/metro/{line}/estacions'
         data = await self._get(url)
         features = data['features']
 
         stations = []
-        stations.extend(MetroStation.create_metro_station(feature) for feature in features)
+        stations.extend(StationMapper.map_metro_station(feature) for feature in features)
         stations.sort(key=lambda x: x.order)
         return stations
 

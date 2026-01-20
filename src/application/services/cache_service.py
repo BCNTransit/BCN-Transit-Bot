@@ -7,7 +7,6 @@ class CacheService:
     """In-memory cache service with optional expiration and logging + timing."""
 
     def __init__(self):
-        # Dictionary: key -> (value, expiration_timestamp)
         self._cache = {}
         self._lock = asyncio.Lock()
         logger.debug("[CacheService] Initialized")

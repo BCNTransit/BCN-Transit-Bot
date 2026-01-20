@@ -17,3 +17,4 @@ asyncpg
 psycopg2-binary
 streamlit
 plotly
+apscheduler
