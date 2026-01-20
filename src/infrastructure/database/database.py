@@ -41,8 +41,8 @@ async def get_db():
 
 async def init_db():
     async with engine.begin() as conn:
-        import src.domain.schemas.models as models
-                
+        import src.domain.schemas.models
+        
         await conn.run_sync(Base.metadata.create_all)
         print("[Database] Tablas inicializadas correctamente.")
 

@@ -99,7 +99,6 @@ class BusService(ServiceBase):
         result = []
         bus_cat_upper = bus_category.upper()
         
-        # Caso 1: Rango Numérico "1-100"
         if "-" in bus_category and bus_category.replace("-", "").isdigit():
             try:
                 start_cat, end_cat = map(int, bus_category.split("-"))
@@ -107,19 +106,14 @@ class BusService(ServiceBase):
                     if line.name.isdigit() and start_cat <= int(line.name) <= end_cat:
                         result.append(line)
             except ValueError:
-                pass # Ignorar si el parseo falla
+                pass
 
-        # Caso 2: Categoría Textual (H, V, N, D...)
         else:
             for line in lines:
-                # Prioridad 1: Campo 'category' explícito (si existe en DB)
                 if line.category and line.category.upper() == bus_cat_upper:
                      result.append(line)
                 
-                # Prioridad 2: Prefijo del nombre (ej: H12 empieza por H)
                 elif line.name.upper().startswith(bus_cat_upper):
-                    # Validación extra: "H12" empieza por "H", pero "120" no empieza por "1" si la cat es "1"
-                    # Si la categoría es una letra (H, V), basta startswith.
                     result.append(line)
 
         elapsed = time.perf_counter() - start

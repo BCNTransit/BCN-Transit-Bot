@@ -4,11 +4,8 @@ import os
 
 sys.path.append(os.getcwd())
 
-from sqlalchemy.future import select
 from src.infrastructure.database.database import engine
 from src.infrastructure.database.base import Base
-from src.domain.schemas.models import LineModel
-from src.domain.enums.transport_type import TransportType
 
 from src.application.services.transport.metro_service import MetroService
 from src.application.services.transport.bus_service import BusService

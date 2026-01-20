@@ -21,14 +21,12 @@ class ConnectionsGenerator:
     async def generate_and_save_connections(self):
         logger.info("🔗 [ConnectionsGenerator] Iniciando cálculo de transbordos...")
         
-        # 1. Cargar todas las estaciones (con JOIN a LineModel para tener nombre/color)
         all_stations = await self.repo.get_all_raw()
         
         if not all_stations:
             logger.warning("⚠️ No hay estaciones en la DB para conectar.")
             return
 
-        # 2. Agrupación (por código de grupo o nombre)
         groups = defaultdict(list)
         for st in all_stations:
             key = self._get_grouping_key(st)
@@ -37,30 +35,22 @@ class ConnectionsGenerator:
 
         stations_to_update = []
 
-        # 3. Procesar Grupos
         for group_key, stations_in_group in groups.items():
             if len(stations_in_group) < 2:
                 continue
 
-            # Cruce de conexiones
             for current_station in stations_in_group:
                 lines_list: List[Line] = []
                 
                 for other_station in stations_in_group:
-                    # A. No conectarse consigo misma
                     if current_station.id == other_station.id:
                         continue
                     
-                    # B. No conectar con la misma línea
                     if current_station.line_id == other_station.line_id:
                         continue
 
-                    # C. Crear objeto Line (Pydantic) a partir del LineModel (SQL)
-                    # OJO: Creamos una "Línea Ligera" (sin estaciones dentro)
                     line_sql = other_station.line
                     if line_sql:
-                        # Mapeo manual SQL -> Pydantic
-                        # Ajusta los campos según tu definición exacta de Line
                         line_dto = Line(
                             id=line_sql.id,               # ej: "metro-L1"
                             original_id=line_sql.original_id, # ej: "L1"
@@ -69,28 +59,22 @@ class ConnectionsGenerator:
                             color=line_sql.color,         # ej: "FF0000"
                             transport_type=line_sql.transport_type,
                             
-                            # 🛑 CRÍTICO: Dejar esto vacío para romper el bucle infinito
                             stations=[], 
                             
-                            # Campos opcionales (rellenar con defaults si son obligatorios)
                             description=line_sql.description,
                             origin=line_sql.origin,
                             destination=line_sql.destination,
-                            has_alerts=False, # No es relevante en una conexión estática
+                            has_alerts=False,
                             extra_data=None
                         )
                         lines_list.append(line_dto)
 
-                # 4. Guardar si hay conexiones
                 if lines_list:
-                    # Instanciamos tu clase Connections
                     connections_obj = Connections(lines=lines_list)
                     
-                    # Serializamos a JSON para la DB
                     current_station.connections_data = connections_obj.model_dump(mode='json')
                     stations_to_update.append(current_station)
 
-        # 5. Upsert Masivo
         if stations_to_update:
             batch_size = 500
             total = len(stations_to_update)

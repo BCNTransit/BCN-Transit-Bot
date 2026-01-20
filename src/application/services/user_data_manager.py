@@ -395,9 +395,6 @@ class UserDataManager:
         Incluye el FCM Token haciendo JOIN con DBUserDevice.
         """
         async with async_session_factory() as session:
-            # 1. MODIFICAMOS LA CONSULTA
-            # Añadimos DBUserDevice.token al select
-            # Hacemos outerjoin (LEFT JOIN) porque un usuario de Telegram podría no tener device
             stmt = (
                 select(DBUser, DBFavorite, DBUserDevice.token) 
                 .join(DBFavorite, DBUser.id == DBFavorite.user_id)
@@ -410,34 +407,24 @@ class UserDataManager:
             
             grouped_data = {}
 
-            # 2. DESEMPAQUETAMOS 3 VALORES (User, Fav, Token)
             for db_user, db_fav, token in rows:
                 user_id_ext = db_user.external_id
                 
-                # Si es la primera vez que vemos al usuario
                 if user_id_ext not in grouped_data:
                     domain_user = self._to_domain_user(db_user)
-                    
-                    # ASIGNAMOS EL TOKEN SI EXISTE
-                    # (Si el usuario tiene varios dispositivos, se quedará con el último procesado)
+
                     if token:
                         domain_user.fcm_token = token
 
                     grouped_data[user_id_ext] = {
                         "user": domain_user,
-                        "favorites": {}, # Usamos un DICT para evitar duplicados temporalmente
-                        "seen_favs": set() # Set auxiliar para control
+                        "favorites": {},
+                        "seen_favs": set()
                     }
                 
-                # ACTUALIZAR TOKEN (Por si apareció en una fila posterior debido al JOIN)
                 if token and not grouped_data[user_id_ext]["user"].fcm_token:
                     grouped_data[user_id_ext]["user"].fcm_token = token
-
-                # 3. EVITAR FAVORITOS DUPLICADOS
-                # El JOIN con devices multiplica las filas. Si tienes 2 dispositivos, 
-                # cada favorito sale 2 veces. Hay que filtrar.
-                
-                # Usamos STATION_CODE + TYPE como clave única temporal
+                    
                 fav_unique_key = f"{db_fav.station_code}_{db_fav.transport_type}"
                 
                 if fav_unique_key not in grouped_data[user_id_ext]["seen_favs"]:
@@ -445,14 +432,11 @@ class UserDataManager:
                     grouped_data[user_id_ext]["favorites"][fav_unique_key] = domain_fav
                     grouped_data[user_id_ext]["seen_favs"].add(fav_unique_key)
 
-            # 4. CONVERTIR DICT DE FAVORITOS A LISTA
             return [
                 (data["user"], list(data["favorites"].values())) 
                 for data in grouped_data.values()
             ]
-
-    # El método _to_domain_user lo dejamos igual, ya que asignamos el token "por fuera"
-    # para no romper otras partes del código que usen este helper.
+        
     def _to_domain_user(self, db_user: DBUser) -> User:
         return User(
             user_id=db_user.external_id,

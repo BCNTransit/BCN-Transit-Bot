@@ -112,7 +112,7 @@ class MetroService(ServiceBase):
             routes = await self.tmb_api_service.get_next_scheduled_metro_at_station(station_code)
         
         if routes:
-            await self.cache_service.set(cache_key, routes, ttl=15) # 15s es más seguro para RealTime
+            await self.cache_service.set(cache_key, routes, ttl=15)
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")

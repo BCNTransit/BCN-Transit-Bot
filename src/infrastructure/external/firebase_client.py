@@ -9,7 +9,6 @@ firebase_credentials_file = "firebase-credentials.json"
 
 def initialize_firebase():
     if firebase_admin._apps:
-        # Ya inicializado, no hacer nada
         return firebase_admin.get_app()
     
     # FIREBASE

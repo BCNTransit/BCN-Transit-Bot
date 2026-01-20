@@ -56,6 +56,8 @@ from src.infrastructure.database.database import init_db, reset_transport_data
 from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
 from src.infrastructure.database.seeders.lines_seeder import seed_lines, seed_stations
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 
 class BotApp:
     """
@@ -64,6 +66,8 @@ class BotApp:
     """
 
     def __init__(self):
+        self.scheduler = AsyncIOScheduler()
+
         self.telegram_token = None
         self.telegraph_token = None
         self.bot = None
@@ -185,10 +189,21 @@ class BotApp:
         logger.info("Handlers initialized")
 
     async def run_seeder(self):
-        #await reset_transport_data()
-        #await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+        await reset_transport_data()
+        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
         await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
 
+    async def run_seeder_job(self):
+        """Wrapper para el job del scheduler con logs"""
+        logger.info("🕐 Ejecutando tarea programada: SEEDER DIARIO...")
+        try:
+            await self.run_seeder()            
+            generator = ConnectionsGenerator()
+            await generator.generate_and_save_connections()
+            
+            logger.info("✅ Seeder diario finalizado con éxito.")
+        except Exception as e:
+            logger.error(f"❌ Error en el seeder diario: {e}")
 
     def register_handlers(self):
         """Register Telegram handlers."""
@@ -257,12 +272,10 @@ class BotApp:
 
     async def run(self):
         """Main async entrypoint for the bot."""
-        await init_db()       
-        #await self.run_seeder()
-        generator = ConnectionsGenerator()
-        await generator.generate_and_save_connections()
+        await init_db()
         initialize_firebase_app()
-        return
+        self.scheduler.add_job(self.run_seeder_job, 'cron', hour=4, minute=0)
+        self.scheduler.start()
 
         self.application = ApplicationBuilder().token(self.telegram_token).build()
         self.register_handlers()
@@ -288,6 +301,10 @@ class BotApp:
         finally:
             # Cleanup
             logger.info("Stopping bot...")
+
+            if self.scheduler.running:
+                self.scheduler.shutdown()
+
             if self.alerts_service:
                 await self.alerts_service.stop()
 

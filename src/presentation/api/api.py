@@ -1,4 +1,3 @@
-import math
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,23 +24,6 @@ from src.domain.schemas.favorite import FavoriteResponse
 from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
 
-from src.infrastructure.database.database import async_session_factory 
-from src.infrastructure.database.repositories.line_repository import LineRepository
-
-
-async def get_db():
-    async with async_session_factory() as session:
-        yield session
-
-
-def clean_floats(obj):
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-        return None
-    if isinstance(obj, dict):
-        return {k: clean_floats(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [clean_floats(v) for v in obj]
-    return obj
 
 def get_metro_router(
     metro_service: MetroService
@@ -276,7 +258,7 @@ def get_user_router(
     @router.post("/register", status_code=status.HTTP_201_CREATED)
     async def register_user(
         request: RegisterRequest = Body(...),
-        uid: str = Depends(get_current_user_uid) 
+        uid: str = Depends(get_current_user_uid)
     ):
         try:
             result = await user_data_manager.register_user(
