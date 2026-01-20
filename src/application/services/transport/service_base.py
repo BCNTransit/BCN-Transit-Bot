@@ -321,8 +321,8 @@ class ServiceBase:
             if not st.line_name: st.line_name = model.extra_data.get('line_name')
             if not st.line_code: st.line_code = model.extra_data.get('line_code')
             if not st.moute_id: st.moute_id = model.extra_data.get('moute_id')
-            if not st.outbound_code: st.outbound_code = model.extra_data.get('outboundCode')
-            if not st.return_code: st.return_code = model.extra_data.get('returnCode')
+            if not st.outbound_code: st.outbound_code = model.extra_data.get('outbound_code')
+            if not st.return_code: st.return_code = model.extra_data.get('return_code')
             if not st.station_group_code: st.station_group_code = model.extra_data.get('station_group_code')
             if not st.direction: st.direction = model.extra_data.get('direction')
 
