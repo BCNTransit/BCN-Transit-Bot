@@ -205,7 +205,7 @@ class TramApiService:
         next_trams = await self._request(
             "GET",
             f"https://tram-web-service.tram.cat/api/opendata/stopTimes"
-            f"?outbound_code={outbound_code}&return_code={return_code}",
+            f"?outboundCode={outbound_code}&returnCode={return_code}",
             use_base_url=False
         )
 
