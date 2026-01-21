@@ -363,7 +363,8 @@ class UserDataManager:
     @audit_action(action_type="GET_FAVORITES", params_args=[])
     async def get_favorites_by_user(self, client_source: ClientType, user_id: str) -> List[FavoriteResponse]:
         async with async_session_factory() as session:
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             if not internal_id: return []
 
             stmt = select(DBFavorite).where(DBFavorite.user_id == internal_id)

@@ -283,15 +283,15 @@ class BotApp:
         logger.info("Starting Telegram polling loop...")
         
         try:
-            await self.application.initialize()
-            await self.application.start()
-            await self.admin_handler.send_commit_to_admins_on_startup()
-            await self.application.updater.start_polling()
+            #await self.application.initialize()
+            #await self.application.start()
+            #await self.admin_handler.send_commit_to_admins_on_startup()
+            #await self.application.updater.start_polling()
             
             logger.info("Creando tarea recurrente...")
             await self.alerts_service.start()
 
-            logger.info("Bot is running. Press Ctrl+C to stop.")
+            #logger.info("Bot is running. Press Ctrl+C to stop.")
             await asyncio.Event().wait()
             
         except KeyboardInterrupt:
@@ -308,10 +308,10 @@ class BotApp:
             if self.alerts_service:
                 await self.alerts_service.stop()
 
-            if self.application.updater.running:
-                await self.application.updater.stop()
-            await self.application.stop()
-            await self.application.shutdown()
+            #if self.application.updater.running:
+            #    await self.application.updater.stop()
+           # await self.application.stop()
+            #await self.application.shutdown()
 
 async def start_fastapi(app):
     config = uvicorn.Config(
