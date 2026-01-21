@@ -6,7 +6,7 @@ from typing import List
 # Modelos DB (SQLAlchemy)
 
 # Modelos Dominio (Pydantic)
-from src.domain.schemas.models import StationModel
+from src.domain.schemas.models import DBStation
 from src.domain.models.common.connections import Connections
 from src.domain.models.common.line import Line
 
@@ -88,7 +88,7 @@ class ConnectionsGenerator:
         else:
             logger.info("ℹ️ No se encontraron nuevas conexiones.")
 
-    def _get_grouping_key(self, station: StationModel) -> str:
+    def _get_grouping_key(self, station: DBStation) -> str:
         """Determina la clave de agrupación (Group Code > Moute ID > Nombre Normalizado)."""
         if station.extra_data:
             g_code = station.extra_data.get("station_group_code") or \

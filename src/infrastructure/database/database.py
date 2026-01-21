@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy.orm import declarative_base
 
+from src.infrastructure.database.base import Base
 from src.application.services.secrets_manager import SecretsManager
 
 secrets = SecretsManager()
@@ -30,7 +30,6 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False
 )
 
-Base = declarative_base()
 
 async def get_db():
     async with async_session_factory() as session:
@@ -42,7 +41,7 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         import src.domain.schemas.models
-        
+        print("🔄 Creando tablas en la base de datos...")
         await conn.run_sync(Base.metadata.create_all)
         print("[Database] Tablas inicializadas correctamente.")
 

@@ -1,38 +1,62 @@
-from sqlalchemy import JSON, Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger, UniqueConstraint
+from enum import Enum as PyEnum
+from sqlalchemy import JSON, Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger, UniqueConstraint, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB
-from datetime import datetime
 from src.infrastructure.database.base import Base 
+
+# Definimos el Enum para usarlo en la columna
+class UserSource(str, PyEnum):
+    ANDROID = "android"
+    TELEGRAM = "telegram"
 
 # ----------------------------
 # USUARIOS
 # ----------------------------
-class User(Base):
+class DBUser(Base):
     __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    external_id = Column(String, unique=True, index=True, nullable=False)
 
-    username = Column(String, nullable=True)
-    language = Column(String, default="es")
+    id = Column(Integer, primary_key=True, index=True)    
+    
+    # GOOGLE
+    email = Column(String, unique=True, index=True, nullable=True)
+    firebase_uid = Column(String, unique=True, index=True, nullable=True)
+    photo_url = Column(String, nullable=True)
+    
+    # TELEGRAM
+    telegram_id = Column(String, unique=True, index=True, nullable=True)
+    
+    # METADATOS
+    # MEJORA: Usar Enum de SQLAlchemy para validar datos a nivel de BD/ORM
+    source = Column(Enum(UserSource), default=UserSource.ANDROID, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     
-    receive_notifications = Column(Boolean, default=True)
-    already_notified_ids = Column(JSONB, default=list) 
-
+    language = Column(String, default="es")
+    
+    # --- RELACIONES ---
+    # Aquí faltaban las definiciones para que funcionen los back_populates de las otras tablas
     devices = relationship("UserDevice", back_populates="user", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
-    subscriptions = relationship("UserSubscription", back_populates="user", cascade="all, delete-orphan")
     audit_trail = relationship("AuditLog", back_populates="user")
-    search_history = relationship("SearchHistory", back_populates="user")
+    search_history = relationship("DBSearchHistory", back_populates="user")
+
 
 class UserDevice(Base):
     __tablename__ = "user_devices"
-    id = Column(Integer, primary_key=True)
+
+    id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    token = Column(String, nullable=False)
-    user = relationship("User", back_populates="devices")
+    
+    # TU LLAVE MAESTRA
+    installation_id = Column(String, index=True, nullable=False) 
+    
+    # TOKEN NOTIFICACIONES
+    fcm_token = Column(String, nullable=False)
+    
+    last_active = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # Usamos string "DBUser" para evitar problemas de importación circular
+    user = relationship("DBUser", back_populates="devices")
 
 # ----------------------------
 # FAVORITOS
@@ -55,13 +79,13 @@ class Favorite(Base):
     latitude = Column(Float, nullable=True) 
     longitude = Column(Float, nullable=True)
 
-    user = relationship("User", back_populates="favorites")
+    user = relationship("DBUser", back_populates="favorites")
 
 # ----------------------------
 # DATOS DE SERVICIO (TMB/RODALIES)
 # ----------------------------
-class ServiceIncident(Base):
-    __tablename__ = "service_incidents"
+class Alert(Base):
+    __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True)
     external_id = Column(String, unique=True)
@@ -77,23 +101,6 @@ class ServiceIncident(Base):
     affected_entities = Column(JSONB)
 
 # ----------------------------
-# SUSCRIPCIONES DE USUARIO
-# ----------------------------
-class UserSubscription(Base):
-    """
-    Lo que antes llamábamos 'Alert'. Configuración del usuario.
-    """
-    __tablename__ = "user_subscriptions"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    line_id = Column(String)
-    days_active = Column(String)
-    start_time = Column(String)
-    end_time = Column(String)
-    
-    user = relationship("User", back_populates="subscriptions")
-
-# ----------------------------
 # AUDIT & HISTORY
 # ----------------------------
 class AuditLog(Base):
@@ -106,25 +113,26 @@ class AuditLog(Base):
     action = Column(String)
     details = Column(JSONB)
     
-    user = relationship("User", back_populates="audit_trail")
+    user = relationship("DBUser", back_populates="audit_trail")
+    
     __table_args__ = (
         Index('ix_audit_details', details, postgresql_using='gin'),
     )
 
-class SearchHistory(Base):
+class DBSearchHistory(Base):
     __tablename__ = "search_history"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     query = Column(String)
     timestamp = Column(DateTime, server_default=func.now())
-    user = relationship("User", back_populates="search_history")
-
+    
+    user = relationship("DBUser", back_populates="search_history")
 
 
 # ----------------------------
 # LINES
 # ----------------------------
-class LineModel(Base):
+class DBLine(Base):
     __tablename__ = "lines"
 
     id = Column(String, primary_key=True, index=True)
@@ -136,7 +144,7 @@ class LineModel(Base):
     destination = Column(String, nullable=True)
     color = Column(String, nullable=False)
     transport_type = Column(String, nullable=False)
-    extra_data = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True) # JSON normal porque rara vez consultamos dentro
 
     __table_args__ = (
         UniqueConstraint('original_id', 'transport_type', name='uq_original_id_transport'),
@@ -145,7 +153,7 @@ class LineModel(Base):
 # ----------------------------
 # STATIONS
 # ----------------------------
-class StationModel(Base):
+class DBStation(Base):
     __tablename__ = "stations"
 
     id = Column(String, primary_key=True, index=True)    
@@ -162,7 +170,9 @@ class StationModel(Base):
     transport_type = Column(String, index=True)
 
     line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True)
-    line = relationship("LineModel", backref="stations_rel")
+    
+    # Backref crea la relación inversa en DBLine automáticamente como 'stations_rel'
+    line = relationship("DBLine", backref="stations_rel") 
 
     connections_data = Column(JSON, nullable=True) 
     extra_data = Column(JSON, nullable=True)
