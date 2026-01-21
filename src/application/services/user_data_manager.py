@@ -133,13 +133,10 @@ class UserDataManager:
         if not external_id: return None
 
         if source == ClientType.TELEGRAM.value:
-            # Búsqueda directa en tabla users
             stmt = select(DBUser.id).where(DBUser.telegram_id == str(external_id))
             res = await session.execute(stmt)
             return res.scalars().first()
         else:
-            # Asumimos Android/App: external_id es el 'installation_id' (UUID)
-            # Buscamos en la tabla de dispositivos para encontrar al dueño
             stmt = select(DBUserDevice.user_id).where(DBUserDevice.installation_id == str(external_id))
             res = await session.execute(stmt)
             return res.scalars().first()
@@ -168,11 +165,6 @@ class UserDataManager:
 
     @audit_action(action_type="REGISTER_USER", params_args=["username"])
     async def register_user(self, client_source: ClientType, user_id: str, username: str, fcm_token: str = "") -> bool:
-        """
-        Registra usuario dependiendo de la fuente.
-        - Android: Crea DBUser + UserDevice (usando user_id como installation_id).
-        - Telegram: Crea DBUser con telegram_id.
-        """
         async with async_session_factory() as session:
             try:
                 db_user = None
@@ -255,7 +247,8 @@ class UserDataManager:
     @audit_action(action_type="UPDATE_LANGUAGE", params_args=["new_language"])
     async def update_user_language(self, client_source: ClientType, user_id: str, new_language: str):
         async with async_session_factory() as session:
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             if not internal_id: return False
 
             stmt = update(DBUser).where(DBUser.id == internal_id).values(language=new_language)
@@ -265,7 +258,8 @@ class UserDataManager:
 
     async def get_user_language(self, client_source: ClientType, user_id: str) -> str:
         async with async_session_factory() as session:
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             if not internal_id: return "es"
 
             stmt = select(DBUser.language).where(DBUser.id == internal_id)
@@ -281,24 +275,20 @@ class UserDataManager:
     async def get_users(self, client_source: ClientType = ClientType.SYSTEM) -> List[User]:
         """Devuelve usuarios. Nota: Para Android devuelve el installation_id como user_id para mantener compatibilidad."""
         async with async_session_factory() as session:
-            # Traemos usuario y sus dispositivos
             stmt = select(DBUser)
             result = await session.execute(stmt)
             db_users = result.scalars().all()
             
             domain_users = []
-            # Nota: Esto es una simplificación. Si un usuario tiene 3 dispositivos, 
-            # esta lógica básica devuelve al usuario base. 
-            # Ajustar según necesidad de negocio.
             for u in db_users:
                 domain_users.append(User(
-                    user_id=u.telegram_id if u.telegram_id else str(u.id), # Fallback ID
+                    user_id=u.telegram_id if u.telegram_id else str(u.id),
                     username=u.username,
                     created_at=u.created_at,
                     language=u.language,
-                    receive_notifications=True, # Asumimos True si no hay campo
+                    receive_notifications=True,
                     already_notified=[],
-                    fcm_token="" # No cargamos tokens en masa por seguridad
+                    fcm_token=""
                 ))
             return domain_users
 
@@ -315,7 +305,8 @@ class UserDataManager:
     @audit_action(action_type="ADD_FAVORITE", params_args=["type", "item"])
     async def add_favorite(self, client_source: ClientType, user_id: str, type: str, item: FavoriteResponse):
         async with async_session_factory() as session:
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             if not internal_id:
                 logger.warning(f"Cannot add favorite: User {user_id} not found in DB")
                 return False
@@ -346,7 +337,8 @@ class UserDataManager:
     @audit_action(action_type="REMOVE_FAVORITE", params_args=["type", "item_id"])
     async def remove_favorite(self, client_source: ClientType, user_id: str, type: str, item_id: str):
         async with async_session_factory() as session:
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             if not internal_id: return False
 
             stmt = delete(DBFavorite).where(
