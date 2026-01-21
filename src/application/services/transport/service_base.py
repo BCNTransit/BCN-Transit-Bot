@@ -10,7 +10,7 @@ from src.domain.models.common.connections import Connections
 from src.infrastructure.database.repositories.stations_repository import StationsRepository
 from src.domain.models.common.station import Station
 from src.infrastructure.mappers.line_mapper import LineMapper
-from src.domain.schemas.models import LineModel, StationModel
+from src.domain.schemas.models import DBLine, DBStation
 from src.application.services.user_data_manager import UserDataManager
 from src.domain.models.common.alert import Alert
 from src.application.utils.utils import Utils
@@ -119,7 +119,7 @@ class ServiceBase:
             'destination', 'origin', 'color', 'extra_data'
         }
 
-        async def transform_line(raw: Line) -> LineModel:
+        async def transform_line(raw: Line) -> DBLine:
             db_id = f"{transport_type.value}-{raw.code}"
             
             if transport_type == TransportType.TRAM:
@@ -131,7 +131,7 @@ class ServiceBase:
 
             extra = self._extract_extra_data(raw, VALID_COLS)
             
-            return LineModel(
+            return DBLine(
                 id=db_id,
                 original_id=str(raw.id),
                 code=str(raw.code),
@@ -156,11 +156,11 @@ class ServiceBase:
             'line_id', 'connections_data', 'extra_data'
         }
 
-        async def transform_station(raw: Station) -> StationModel:
+        async def transform_station(raw: Station) -> DBStation:
             db_id = f"{transport_type.value}-{raw.line_code}-{raw.id}"
             extra = self._extract_extra_data(raw, VALID_COLS)
             
-            return StationModel(
+            return DBStation(
                 id=db_id,
                 original_id=str(raw.id),
                 code=str(raw.code),

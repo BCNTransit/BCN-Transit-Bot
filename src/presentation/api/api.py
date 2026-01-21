@@ -1,9 +1,16 @@
 from typing import List
 
+import asyncio
+from fastapi import APIRouter
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
 from pydantic import BaseModel
+from requests import Session
 
+from firebase_admin import auth
+from src.domain.schemas.models import DBUser, UserDevice, UserSource
+from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.presentation.api.auth import get_current_user_uid
 
 from src.application.services.user_data_manager import UserDataManager
@@ -24,6 +31,13 @@ from src.domain.schemas.favorite import FavoriteResponse
 from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
 
+from src.infrastructure.database.database import get_db
+from src.infrastructure.database.database import async_session_factory
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+    fcm_token: str
 
 def get_metro_router(
     metro_service: MetroService
@@ -179,8 +193,7 @@ def get_fgc_router(
 
     return router
 
-import asyncio
-from fastapi import APIRouter
+
 
 def get_results_router(
     metro_service: MetroService,
@@ -249,7 +262,6 @@ def get_results_router(
 
     return router
 
-
 def get_user_router(
     user_data_manager: UserDataManager
 ) -> APIRouter:
@@ -271,6 +283,92 @@ def get_user_router(
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error registering user: {str(e)}")
+        
+    @router.post("/auth/google")
+    async def google_login(
+        request: GoogleLoginRequest, 
+        # Eliminamos 'db' directo, usamos el factory que usa el repo internamente
+        # Asumo que tienes una dependencia get_user_repository o instancias el repo aquí
+    ):
+        try:
+            # 1. Verificar Token con Firebase
+            decoded_token = auth.verify_id_token(request.id_token)
+            email = decoded_token.get('email')
+            uid = decoded_token.get('uid')
+            photo_url = decoded_token.get('picture')
+            
+            if not email:
+                raise HTTPException(status_code=400, detail="El token no contiene email")
+
+            # Instanciamos repo (o úsalo con Depends si lo tienes configurado)
+            user_repo = UserRepository(async_session_factory)
+
+            # ---------------------------------------------------------
+            # ESCENARIO 1: LOGIN (El usuario ya existe por email)
+            # ---------------------------------------------------------
+            user = await user_repo.get_by_email(email)
+
+            if user:
+                # LÓGICA DE MULTI-DISPOSITIVO:
+                # El usuario existe, pero... ¿está entrando desde un móvil nuevo?
+                # Verificamos si este dispositivo (installation_id) ya está en su lista.
+                
+                # NOTA: Uso request.fcm_token como installation_id temporalmente.
+                device_exists = any(d.installation_id == request.fcm_token for d in user.devices)
+                
+                if not device_exists:
+                    # Es el mismo usuario, pero en un móvil nuevo. Registramos el dispositivo.
+                    new_device = UserDevice(
+                        installation_id=request.fcm_token, # Idealmente UUID
+                        fcm_token=request.fcm_token
+                    )
+                    await user_repo.add_device_to_user(user.user_id, new_device)
+
+                return {"status": "success", "user_id": user.id}
+            
+            # ---------------------------------------------------------
+            # ESCENARIO 2: MIGRACIÓN (Email nuevo, pero dispositivo conocido)
+            # ---------------------------------------------------------
+            # Buscamos si hay un usuario anónimo asociado a este dispositivo
+            user_to_migrate = await user_repo.get_user_by_installation_id(request.fcm_token)
+
+            if user_to_migrate:
+                # ¡Encontrado! Este dispositivo pertenecía a un anónimo.
+                # Le ponemos nombre y apellidos (Email y UID).
+                
+                user_to_migrate.email = email
+                user_to_migrate.firebase_uid = uid
+                user_to_migrate.photo_url = photo_url
+                user_to_migrate.source = UserSource.ANDROID # Confirmamos fuente
+                
+                await user_repo.update(user_to_migrate)
+                
+                return {"status": "merged", "message": "Cuenta recuperada y vinculada"}
+            
+            # ---------------------------------------------------------
+            # ESCENARIO 3: REGISTRO TOTAL (Usuario nuevo, Dispositivo nuevo)
+            # ---------------------------------------------------------
+            new_user = DBUser(
+                email=email,
+                firebase_uid=uid,
+                photo_url=photo_url,
+                source=UserSource.ANDROID
+            )
+            
+            new_device = UserDevice(
+                installation_id=request.fcm_token, # Tu llave para recuperarlo en el futuro
+                fcm_token=request.fcm_token        # La llave para notificarle
+            )
+
+            await user_repo.create_with_device(new_user, new_device)
+            
+            return {"status": "created"}
+
+        except auth.InvalidIdTokenError as e:
+            raise HTTPException(status_code=401, detail=f"Token inválido: {e}")
+        except Exception as e:
+            print(f"Error en login: {e}") 
+            raise HTTPException(status_code=500, detail="Error interno del servidor")
         
     @router.post("/notifications/toggle/{status}")
     async def toggle_user_notifications(status: bool, uid: str = Depends(get_current_user_uid)):

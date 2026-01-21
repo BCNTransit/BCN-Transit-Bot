@@ -1,51 +1,45 @@
 import asyncio
 import inspect
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime
 from functools import wraps
 
 # SQLAlchemy & DB
-from sqlalchemy import select, delete, update, and_, func
+from sqlalchemy import select, delete, update, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.database import async_session_factory
 from src.domain.enums.clients import ClientType
 from src.domain.enums.transport_type import TransportType
+
+# Domain Models
 from src.domain.models.common.user import User
 from src.domain.models.common.alert import Alert, AffectedEntity, Publication
 
-# Database Models
+# Database Models (El esquema nuevo)
 from src.domain.schemas.models import (
-    User as DBUser, 
+    DBUser, 
+    UserDevice as DBUserDevice,
     Favorite as DBFavorite, 
-    ServiceIncident as DBServiceIncident, 
+    Alert as DBAlert, 
     AuditLog as DBAuditLog, 
-    SearchHistory as DBSearchHistory,
-    UserDevice as DBUserDevice
+    DBSearchHistory,
+    UserSource
 )
 
-# Domain Models
+# Domain Schemas
 from src.domain.schemas.favorite import FavoriteResponse
-
-# Telegram
-from telegram import Update
 
 logger = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------------
-# DECORADOR DE AUDITORÍA (Debe estar definido antes de la clase)
+# DECORADOR DE AUDITORÍA
 # -------------------------------------------------------------------------
 def audit_action(action_type: str, params_args: list = None):
-    """
-    Decorador para métodos de UserDataManager.
-    Extrae user_id y client_source directamente de los argumentos de la función.
-    """
     def decorator(func):
         @wraps(func)
         async def wrapper(self, *args, **kwargs):
-            # -------------------------------------------------------
-            # 1. EJECUCIÓN INMEDIATA
-            # -------------------------------------------------------
+            # 1. Ejecución inmediata
             try:
                 result = await func(self, *args, **kwargs)
                 status = "SUCCESS"
@@ -55,79 +49,54 @@ def audit_action(action_type: str, params_args: list = None):
                 status = "ERROR"
                 error_info = str(e)
 
-            # -------------------------------------------------------
-            # 2. EXTRACCIÓN DE DATOS (Usando Inspección de Firma)
-            # -------------------------------------------------------
+            # 2. Extracción de datos
             try:
-                # Esto "mapea" los args y kwargs a los nombres reales de los parámetros de la función
                 sig = inspect.signature(func)
-                # self ya está en el wrapper, bindeamos el resto
                 bound_args = sig.bind(self, *args, **kwargs)
                 bound_args.apply_defaults()
-                
-                # Diccionario con todos los valores pasados a la función
                 func_args = bound_args.arguments
 
-                # Extraemos datos clave
-                # Convertimos a str para asegurar compatibilidad (Enum -> str, Int -> str)
-                
+                # Extracción segura de Source
                 raw_source = func_args.get("client_source", "UNKNOWN")
-                source = str(raw_source.value) if hasattr(raw_source, "value") else str(raw_source)
+                if hasattr(raw_source, "value"):
+                    source_str = str(raw_source.value)
+                elif isinstance(raw_source, ClientType):
+                    source_str = raw_source.value
+                else:
+                    source_str = str(raw_source)
 
+                # User ID externo (Installation ID o Telegram ID)
                 raw_user_id = func_args.get("user_id")
                 user_id_ext = str(raw_user_id) if raw_user_id is not None else None
 
-                # Preparamos detalles
-                details = {
-                    "params": {},
-                    "status": status
-                }
-                if error_info:
-                    details["error"] = error_info
+                details = {"params": {}, "status": status}
+                if error_info: details["error"] = error_info
 
-                # Extraemos parámetros adicionales solicitados en params_args
                 if params_args:
                     for param_name in params_args:
                         if param_name in func_args:
                             val = func_args[param_name]
-                            # Manejo inteligente de tipos (Enums, Pydantic, etc)
-                            if hasattr(val, "value"): # Enum
-                                val_str = str(val.value)
-                            elif hasattr(val, "model_dump_json"): # Pydantic v2
-                                val_str = val.model_dump_json()
-                            elif hasattr(val, "dict"): # Pydantic v1
-                                val_str = str(val.dict())
-                            else:
-                                val_str = str(val)
-                            
-                            details["params"][param_name] = val_str
+                            if hasattr(val, "value"): details["params"][param_name] = str(val.value)
+                            elif hasattr(val, "model_dump_json"): details["params"][param_name] = val.model_dump_json()
+                            elif hasattr(val, "dict"): details["params"][param_name] = str(val.dict())
+                            else: details["params"][param_name] = str(val)
 
-                # -------------------------------------------------------
-                # 3. GUARDADO ASÍNCRONO
-                # -------------------------------------------------------
-                # Como el decorador está EN el UserDataManager, 'self' ES el manager.
+                # 3. Guardado en background
                 if user_id_ext and hasattr(self, "save_audit_log_background"):
                     asyncio.create_task(
                         self.save_audit_log_background(
                             user_id_ext=user_id_ext,
-                            source=source,
+                            source=source_str,
                             action=action_type,
                             details=details
                         )
                     )
-                else:
-                    if user_id_ext:
-                        logger.error(f"[Audit] Method save_audit_log_background not found in {self.__class__.__name__}")
 
             except Exception as log_err:
                 logger.error(f"[Audit] Failed to log action: {log_err}")
 
-            # -------------------------------------------------------
-            # 4. FINALIZACIÓN
-            # -------------------------------------------------------
             if status == "ERROR" and isinstance(result, Exception):
                 raise result
-
             return result
         return wrapper
     return decorator
@@ -138,8 +107,7 @@ def audit_action(action_type: str, params_args: list = None):
 # -------------------------------------------------------------------------
 class UserDataManager:
     """
-    Gestor de datos usando PostgreSQL + SQLAlchemy (Async).
-    Reemplaza al antiguo gestor basado en Google Sheets.
+    Gestor de datos adaptado al esquema DBUser + UserDevice (One User, Many Devices).
     """
 
     FAVORITE_TYPE_ORDER = {
@@ -150,18 +118,41 @@ class UserDataManager:
     }
 
     def __init__(self):
-        logger.info("Initializing UserDataManager with PostgreSQL...")
+        logger.info("Initializing UserDataManager with New DB Schema...")
+
+    # ---------------------------------------------------------------------
+    # MÉTODOS PRIVADOS (RESOLUCIÓN DE USUARIOS)
+    # ---------------------------------------------------------------------
+
+    async def _resolve_user_internal_id(self, session: AsyncSession, external_id: str, source: str) -> Optional[int]:
+        """
+        Método CRÍTICO: Decide cómo buscar al usuario según el origen.
+        - Si es TELEGRAM -> Busca en DBUser.telegram_id
+        - Si es ANDROID -> Busca en UserDevice.installation_id y devuelve el user_id padre.
+        """
+        if not external_id: return None
+
+        if source == ClientType.TELEGRAM.value:
+            # Búsqueda directa en tabla users
+            stmt = select(DBUser.id).where(DBUser.telegram_id == str(external_id))
+            res = await session.execute(stmt)
+            return res.scalars().first()
+        else:
+            # Asumimos Android/App: external_id es el 'installation_id' (UUID)
+            # Buscamos en la tabla de dispositivos para encontrar al dueño
+            stmt = select(DBUserDevice.user_id).where(DBUserDevice.installation_id == str(external_id))
+            res = await session.execute(stmt)
+            return res.scalars().first()
 
     async def save_audit_log_background(self, user_id_ext, source, action, details):
-        """Tarea en segundo plano: no bloquea la respuesta al usuario"""
+        """Guarda log resolviendo correctamente quién es el usuario."""
         async with async_session_factory() as session:
             try:
-                stmt = select(DBUser.id).where(DBUser.external_id == str(user_id_ext))
-                res = await session.execute(stmt)
-                internal_id = res.scalars().first()
-
+                # Reutilizamos la lógica de resolución
+                internal_id = await self._resolve_user_internal_id(session, user_id_ext, source)
+                
                 new_log = DBAuditLog(
-                    user_id=internal_id,
+                    user_id=internal_id, # Puede ser None si el usuario falló al registrarse
                     client_source=source,
                     action=action,
                     details=details
@@ -171,55 +162,88 @@ class UserDataManager:
             except Exception as e:
                 logger.error(f"[Audit] DB Write Failed: {e}")
 
-
-    async def _get_user_internal_id(self, session: AsyncSession, external_id: str) -> Optional[int]:
-        """Busca el ID numérico (PK) a partir del ID de Telegram/Android"""
-        stmt = select(DBUser.id).where(DBUser.external_id == str(external_id))
-        result = await session.execute(stmt)
-        return result.scalars().first()
-
     # ---------------------------
-    # USERS
+    # USERS & REGISTRATION
     # ---------------------------
 
     @audit_action(action_type="REGISTER_USER", params_args=["username"])
     async def register_user(self, client_source: ClientType, user_id: str, username: str, fcm_token: str = "") -> bool:
-        """Registra usuario o actualiza su token/última actividad."""
+        """
+        Registra usuario dependiendo de la fuente.
+        - Android: Crea DBUser + UserDevice (usando user_id como installation_id).
+        - Telegram: Crea DBUser con telegram_id.
+        """
         async with async_session_factory() as session:
             try:
-                # Buscar usuario
-                stmt = select(DBUser).where(DBUser.external_id == str(user_id))
-                result = await session.execute(stmt)
-                db_user = result.scalars().first()
-                
+                db_user = None
                 is_new = False
+                source_val = client_source.value
 
-                if not db_user:
-                    # Crear nuevo
-                    is_new = True
-                    db_user = DBUser(
-                        external_id=str(user_id),
-                        username=username,
-                        language="es", # Default
-                        receive_notifications=True
-                    )
-                    session.add(db_user)
-                    await session.flush() # Para obtener el ID generado
+                # 1. BUSCAR USUARIO EXISTENTE
+                if client_source == ClientType.TELEGRAM:
+                    stmt = select(DBUser).where(DBUser.telegram_id == str(user_id))
+                    res = await session.execute(stmt)
+                    db_user = res.scalars().first()
                 else:
+                    # Android: Buscamos por installation_id en dispositivos
+                    stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
+                    res = await session.execute(stmt)
+                    db_user = res.scalars().first()
+
+                # 2. CREAR SI NO EXISTE
+                if not db_user:
+                    is_new = True
+                    if client_source == ClientType.TELEGRAM:
+                        db_user = DBUser(
+                            telegram_id=str(user_id),
+                            username=username,
+                            source=UserSource.TELEGRAM,
+                            language="es"
+                        )
+                        session.add(db_user)
+                        await session.flush() # Para tener ID
+                    else:
+                        # Android Nuevo: Usuario + Dispositivo
+                        db_user = DBUser(
+                            source=UserSource.ANDROID,
+                            username=username,
+                            language="es"
+                        )
+                        session.add(db_user)
+                        await session.flush()
+                        
+                        # Creamos el dispositivo vinculado
+                        new_device = DBUserDevice(
+                            user_id=db_user.id,
+                            installation_id=str(user_id),
+                            fcm_token=fcm_token
+                        )
+                        session.add(new_device)
+                else:
+                    # 3. ACTUALIZAR EXISTENTE
                     if username:
                         db_user.username = username
-
-                # Gestionar Dispositivo (FCM)
-                if fcm_token:
-                    stmt_device = select(DBUserDevice).where(
-                        and_(DBUserDevice.user_id == db_user.id, DBUserDevice.token == fcm_token)
-                    )
-                    res_device = await session.execute(stmt_device)
-                    device = res_device.scalars().first()
-
-                    if not device:
-                        new_device = DBUserDevice(user_id=db_user.id, token=fcm_token)
-                        session.add(new_device)
+                    
+                    # Si es Android y ya existe el usuario, verificamos si el dispositivo existe
+                    if client_source != ClientType.TELEGRAM:
+                        # Buscamos este dispositivo específico
+                        stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
+                        res_dev = await session.execute(stmt_dev)
+                        device = res_dev.scalars().first()
+                        
+                        if device:
+                            # Actualizamos token si ha cambiado
+                            if fcm_token and device.fcm_token != fcm_token:
+                                device.fcm_token = fcm_token
+                        else:
+                            # Caso raro: Usuario existe pero este dispositivo no (Login en móvil nuevo)
+                            # Nota: Normalmente esto se maneja en el endpoint de Login, pero por seguridad:
+                            new_device = DBUserDevice(
+                                user_id=db_user.id,
+                                installation_id=str(user_id),
+                                fcm_token=fcm_token
+                            )
+                            session.add(new_device)
 
                 await session.commit()
                 return is_new
@@ -229,84 +253,74 @@ class UserDataManager:
                 return False
 
     @audit_action(action_type="UPDATE_LANGUAGE", params_args=["new_language"])
-    async def update_user_language(self, client_source: ClientType, user_id: int, new_language: str):
+    async def update_user_language(self, client_source: ClientType, user_id: str, new_language: str):
         async with async_session_factory() as session:
-            stmt = update(DBUser).where(DBUser.external_id == str(user_id)).values(language=new_language)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            if not internal_id: return False
+
+            stmt = update(DBUser).where(DBUser.id == internal_id).values(language=new_language)
             await session.execute(stmt)
             await session.commit()
             return True
 
-    async def get_user_language(self, user_id: int) -> str:
+    async def get_user_language(self, client_source: ClientType, user_id: str) -> str:
         async with async_session_factory() as session:
-            stmt = select(DBUser.language).where(DBUser.external_id == str(user_id))
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            if not internal_id: return "es"
+
+            stmt = select(DBUser.language).where(DBUser.id == internal_id)
             result = await session.execute(stmt)
             lang = result.scalars().first()
             return lang if lang else "en"
 
+    # ---------------------------
+    # NOTIFICATIONS & LISTING
+    # ---------------------------
+
     @audit_action(action_type="GET_ALL_USERS", params_args=[])
-    async def get_users(self, client_source: ClientType = ClientType.SYSTEM.value) -> List[User]:
+    async def get_users(self, client_source: ClientType = ClientType.SYSTEM) -> List[User]:
+        """Devuelve usuarios. Nota: Para Android devuelve el installation_id como user_id para mantener compatibilidad."""
         async with async_session_factory() as session:
+            # Traemos usuario y sus dispositivos
             stmt = select(DBUser)
             result = await session.execute(stmt)
             db_users = result.scalars().all()
             
-            return [
-                User(
-                    user_id=u.external_id,
+            domain_users = []
+            # Nota: Esto es una simplificación. Si un usuario tiene 3 dispositivos, 
+            # esta lógica básica devuelve al usuario base. 
+            # Ajustar según necesidad de negocio.
+            for u in db_users:
+                domain_users.append(User(
+                    user_id=u.telegram_id if u.telegram_id else str(u.id), # Fallback ID
                     username=u.username,
                     created_at=u.created_at,
                     language=u.language,
-                    receive_notifications=u.receive_notifications,
-                    already_notified=u.already_notified_ids if u.already_notified_ids else [], 
-                    fcm_token=""
-                ) for u in db_users
-            ]
-
-    @audit_action(action_type="UPDATE_NOTIFIED_ALERTS", params_args=["alert_id"])
-    async def update_notified_alerts(self, user_id, alert_id, client_source: ClientType = ClientType.SYSTEM.value):
-        async with async_session_factory() as session:
-            stmt = select(DBUser).where(DBUser.external_id == str(user_id))
-            result = await session.execute(stmt)
-            user = result.scalars().first()
-            
-            if user:
-                current_list = list(user.already_notified_ids) if user.already_notified_ids else []
-                if alert_id not in current_list:
-                    current_list.append(alert_id)
-                    user.already_notified_ids = current_list 
-                    await session.commit()
-                    return True
-            return False
+                    receive_notifications=True, # Asumimos True si no hay campo
+                    already_notified=[],
+                    fcm_token="" # No cargamos tokens en masa por seguridad
+                ))
+            return domain_users
 
     @audit_action(action_type="GET_USER_RECEIVE_NOTIFICATIONS", params_args=[])
     async def get_user_receive_notifications(self, client_source: ClientType, user_id: str) -> bool:
-        async with async_session_factory() as session:
-            stmt = select(DBUser.receive_notifications).where(DBUser.external_id == str(user_id))
-            result = await session.execute(stmt)
-            val = result.scalars().first()
-            return val if val is not None else False
-
-    @audit_action(action_type="UPDATE_USER_RECEIVE_NOTIFICATIONS", params_args=["status"])
-    async def update_user_receive_notifications(self, client_source: ClientType, user_id: str, status: bool) -> bool:
-        async with async_session_factory() as session:
-            stmt = update(DBUser).where(DBUser.external_id == str(user_id)).values(receive_notifications=status)
-            result = await session.execute(stmt)
-            await session.commit()
-            return result.rowcount > 0
+        # En el nuevo modelo no tenías campo receive_notifications en DBUser, 
+        # asumimos True o añádelo a DBUser si lo necesitas.
+        return True 
 
     # ---------------------------
     # FAVORITES
     # ---------------------------
 
     @audit_action(action_type="ADD_FAVORITE", params_args=["type", "item"])
-    async def add_favorite(self, client_source: ClientType, user_id: int, type: str, item: FavoriteResponse):
+    async def add_favorite(self, client_source: ClientType, user_id: str, type: str, item: FavoriteResponse):
         async with async_session_factory() as session:
-            try:
-                internal_id = await self._get_user_internal_id(session, user_id)
-                if not internal_id:
-                    logger.warning(f"Cannot add favorite: User {user_id} not found in DB")
-                    return False
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            if not internal_id:
+                logger.warning(f"Cannot add favorite: User {user_id} not found in DB")
+                return False
 
+            try:
                 lat = item.coordinates[0] if item.coordinates and len(item.coordinates) > 0 else None
                 lon = item.coordinates[1] if item.coordinates and len(item.coordinates) > 1 else None
 
@@ -330,9 +344,9 @@ class UserDataManager:
                 return False
 
     @audit_action(action_type="REMOVE_FAVORITE", params_args=["type", "item_id"])
-    async def remove_favorite(self, client_source: ClientType, user_id: int, type: str, item_id: str):
+    async def remove_favorite(self, client_source: ClientType, user_id: str, type: str, item_id: str):
         async with async_session_factory() as session:
-            internal_id = await self._get_user_internal_id(session, user_id)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
             if not internal_id: return False
 
             stmt = delete(DBFavorite).where(
@@ -347,9 +361,9 @@ class UserDataManager:
             return result.rowcount > 0
 
     @audit_action(action_type="GET_FAVORITES", params_args=[])
-    async def get_favorites_by_user(self, client_source: ClientType, user_id: int) -> List[FavoriteResponse]:
+    async def get_favorites_by_user(self, client_source: ClientType, user_id: str) -> List[FavoriteResponse]:
         async with async_session_factory() as session:
-            internal_id = await self._get_user_internal_id(session, user_id)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
             if not internal_id: return []
 
             stmt = select(DBFavorite).where(DBFavorite.user_id == internal_id)
@@ -358,93 +372,158 @@ class UserDataManager:
 
             fav_items = []
             for f in db_favs:
-                fav_items.append(FavoriteResponse(
-                    type=f.transport_type,
-                    station_code=f.station_code,
-                    station_name=f.station_name,
-                    station_group_code=f.station_group_code or "",
-                    line_name=f.line_name or "",
-                    line_name_with_emoji=f.line_name_with_emoji or "",
-                    line_code=f.line_code or "",
-                    coordinates=[f.latitude or 0, f.longitude or 0]
-                ))
+                fav_items.append(self._to_domain_favorite(f, str(user_id)))
             
             return sorted(
                 fav_items,
                 key=lambda f: self.FAVORITE_TYPE_ORDER.get(f.type, 999)
             )
 
-    async def has_favorite(self, user_id, type, item_id) -> bool:
-        async with async_session_factory() as session:
-            internal_id = await self._get_user_internal_id(session, user_id)
-            if not internal_id: return False
-            
-            stmt = select(DBFavorite).where(
-                and_(
-                    DBFavorite.user_id == internal_id,
-                    DBFavorite.transport_type == str(type).lower(),
-                    DBFavorite.station_code == str(item_id)
-                )
-            )
-            result = await session.execute(stmt)
-            return result.scalars().first() is not None
-        
     async def get_active_users_with_favorites(self) -> List[tuple[User, List[FavoriteResponse]]]:
         """
-        Obtiene usuarios que tienen notificaciones activas Y tienen favoritos.
-        Incluye el FCM Token haciendo JOIN con DBUserDevice.
+        Obtiene usuarios con favoritos y sus tokens para notificaciones.
+        CRÍTICO: Un usuario puede tener múltiples dispositivos, así que esto
+        debería devolver tokens, no solo usuarios.
         """
         async with async_session_factory() as session:
+            # Join Users -> Favorites AND Users -> Devices
+            # Solo usuarios de Android que tengan dispositivos registrados
             stmt = (
-                select(DBUser, DBFavorite, DBUserDevice.token) 
+                select(DBUser, DBFavorite, DBUserDevice.fcm_token)
                 .join(DBFavorite, DBUser.id == DBFavorite.user_id)
-                .outerjoin(DBUserDevice, DBUser.id == DBUserDevice.user_id)
-                .where(DBUser.receive_notifications == True)
+                .join(DBUserDevice, DBUser.id == DBUserDevice.user_id) # Inner join, solo si tiene dispositivo
+                .where(DBUser.source == UserSource.ANDROID)
             )
             
             result = await session.execute(stmt)
             rows = result.all()
             
+            # Agrupamos por TOKEN de dispositivo (porque enviamos push al token, no al usuario abstracto)
+            # Si un usuario tiene 2 móviles, procesaremos 2 entradas aquí.
             grouped_data = {}
 
             for db_user, db_fav, token in rows:
-                user_id_ext = db_user.external_id
+                if not token: continue
                 
-                if user_id_ext not in grouped_data:
+                # Usamos el token como clave única de envío
+                key = token 
+                
+                if key not in grouped_data:
                     domain_user = self._to_domain_user(db_user)
-
-                    if token:
-                        domain_user.fcm_token = token
-
-                    grouped_data[user_id_ext] = {
+                    domain_user.fcm_token = token
+                    
+                    grouped_data[key] = {
                         "user": domain_user,
-                        "favorites": {},
+                        "favorites": [],
                         "seen_favs": set()
                     }
                 
-                if token and not grouped_data[user_id_ext]["user"].fcm_token:
-                    grouped_data[user_id_ext]["user"].fcm_token = token
-                    
-                fav_unique_key = f"{db_fav.station_code}_{db_fav.transport_type}"
-                
-                if fav_unique_key not in grouped_data[user_id_ext]["seen_favs"]:
-                    domain_fav = self._to_domain_favorite(db_fav, user_id_ext)
-                    grouped_data[user_id_ext]["favorites"][fav_unique_key] = domain_fav
-                    grouped_data[user_id_ext]["seen_favs"].add(fav_unique_key)
+                # Evitar duplicados de favoritos
+                fav_unique = f"{db_fav.station_code}_{db_fav.transport_type}"
+                if fav_unique not in grouped_data[key]["seen_favs"]:
+                    grouped_data[key]["favorites"].append(
+                        self._to_domain_favorite(db_fav, "system")
+                    )
+                    grouped_data[key]["seen_favs"].add(fav_unique)
 
             return [
-                (data["user"], list(data["favorites"].values())) 
+                (data["user"], data["favorites"]) 
                 for data in grouped_data.values()
             ]
-        
+
+    # ---------------------------
+    # SEARCH HISTORY
+    # ---------------------------
+    async def register_search(self, query: str, client_source: ClientType, user_id: str):
+        async with async_session_factory() as session:
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            if internal_id:
+                new_search = DBSearchHistory(user_id=internal_id, query=query)
+                session.add(new_search)
+                await session.commit()
+                return 1
+            return 0
+
+    async def get_search_history(self, client_source: ClientType, user_id: str) -> List[str]:
+        async with async_session_factory() as session:
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), client_source.value)
+            if not internal_id: return []
+
+            stmt = (
+                select(DBSearchHistory.query)
+                .where(DBSearchHistory.user_id == internal_id)
+                .group_by(DBSearchHistory.query)
+                .order_by(func.max(DBSearchHistory.timestamp).desc())
+                .limit(10)
+            )
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
+    # ---------------------------
+    # ALERTS (Service Incidents) - NO CAMBIA
+    # ---------------------------
+    async def register_alert(self, transport_type: TransportType, api_alert: Alert):
+        async with async_session_factory() as session:
+            stmt = select(DBAlert).where(
+                and_(
+                    DBAlert.external_id == str(api_alert.id),
+                    DBAlert.transport_type == transport_type.value
+                )
+            )
+            result = await session.execute(stmt)
+            if result.scalars().first(): return False
+
+            new_incident = DBAlert(
+                external_id=str(api_alert.id),
+                transport_type=transport_type.value,
+                begin_date=api_alert.begin_date,
+                end_date=api_alert.end_date,
+                status=api_alert.status,
+                cause=api_alert.cause,
+                publications=[pub.__dict__ for pub in api_alert.publications],
+                affected_entities=[ent.__dict__ for ent in api_alert.affected_entities]
+            )
+            session.add(new_incident)
+            await session.commit()
+            return True
+
+    async def get_alerts(self, only_active: bool = True) -> List[Alert]:
+        async with async_session_factory() as session:
+            stmt = select(DBAlert)
+            if only_active:
+                now = datetime.now()
+                stmt = stmt.where((DBAlert.end_date == None) | (DBAlert.end_date > now))
+            result = await session.execute(stmt)
+            db_alerts = result.scalars().all()
+
+            domain_alerts = []
+            for a in db_alerts:
+                pubs = [Publication(**p) for p in (a.publications or [])]
+                ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
+                domain_alerts.append(Alert(
+                    id=str(a.external_id),
+                    transport_type=TransportType(a.transport_type) if a.transport_type else None,
+                    begin_date=a.begin_date,
+                    end_date=a.end_date,
+                    status=a.status,
+                    cause=a.cause,
+                    publications=pubs,
+                    affected_entities=ents
+                ))
+            return domain_alerts
+
+    # ---------------------------
+    # HELPERS
+    # ---------------------------
     def _to_domain_user(self, db_user: DBUser) -> User:
+        # User Domain Model necesita mapeo
         return User(
-            user_id=db_user.external_id,
+            user_id=str(db_user.id), # Internal ID mapping
             username=db_user.username,
             created_at=db_user.created_at,
             language=db_user.language,
-            receive_notifications=db_user.receive_notifications,
-            already_notified=db_user.already_notified_ids if db_user.already_notified_ids else [],
+            receive_notifications=True,
+            already_notified=[],
             fcm_token=""
         )
 
@@ -460,109 +539,3 @@ class UserDataManager:
             line_code=f.line_code or "",
             coordinates=[f.latitude or 0, f.longitude or 0]
         )
-
-    # ---------------------------
-    # SEARCHES
-    # ---------------------------
-    async def register_search(self, query: str, user_id_ext: str = None):
-        async with async_session_factory() as session:
-            internal_id = None
-            if user_id_ext:
-                internal_id = await self._get_user_internal_id(session, user_id_ext)
-            
-            if internal_id:
-                new_search = DBSearchHistory(
-                    user_id=internal_id,
-                    query=query
-                )
-                session.add(new_search)
-                await session.commit()
-                return 1
-            return 0
-        
-    async def get_search_history(self, user_id_ext: str) -> List[str]:
-        async with async_session_factory() as session:
-            internal_id = await self._get_user_internal_id(session, user_id_ext)
-            if not internal_id:
-                return []
-
-            stmt = (
-                select(DBSearchHistory.query)
-                .where(DBSearchHistory.user_id == internal_id)
-                .group_by(DBSearchHistory.query)
-                .order_by(func.max(DBSearchHistory.timestamp).desc())
-                .limit(10)
-            )
-            
-            result = await session.execute(stmt)
-            searches = result.scalars().all()
-            return searches
-
-    # ---------------------------
-    # ALERTS (Service Incidents)
-    # ---------------------------
-
-    async def register_alert(self, transport_type: TransportType, api_alert: Alert):
-        async with async_session_factory() as session:
-            stmt = select(DBServiceIncident).where(
-                and_(
-                    DBServiceIncident.external_id == str(api_alert.id),
-                    DBServiceIncident.transport_type == transport_type.value
-                )
-            )
-            result = await session.execute(stmt)
-            exists = result.scalars().first()
-
-            if exists:
-                return False
-
-            new_incident = DBServiceIncident(
-                external_id=str(api_alert.id),
-                transport_type=transport_type.value,
-                begin_date=api_alert.begin_date,
-                end_date=api_alert.end_date,
-                status=api_alert.status,
-                cause=api_alert.cause,
-                publications=[pub.__dict__ for pub in api_alert.publications],
-                affected_entities=[ent.__dict__ for ent in api_alert.affected_entities]
-            )
-            session.add(new_incident)
-            await session.commit()
-            logger.info(f"New ServiceIncident registered: {api_alert.id}")
-            return True
-
-    async def get_alerts(self, only_active: bool = True) -> List[Alert]:
-        async with async_session_factory() as session:
-            stmt = select(DBServiceIncident)
-
-            if only_active:
-                now = datetime.now()
-                stmt = stmt.where(
-                    (DBServiceIncident.end_date == None) | 
-                    (DBServiceIncident.end_date > now)
-                )
-            result = await session.execute(stmt)
-            db_alerts = result.scalars().all()
-
-            domain_alerts = []
-            for a in db_alerts:
-                pubs = [Publication(**p) for p in (a.publications or [])]
-                ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
-
-                domain_alerts.append(Alert(
-                    id=str(a.external_id),
-                    transport_type=TransportType(a.transport_type) if a.transport_type else None,
-                    begin_date=a.begin_date,
-                    end_date=a.end_date,
-                    status=a.status,
-                    cause=a.cause,
-                    publications=pubs,
-                    affected_entities=ents
-                ))
-            return domain_alerts
-        
-
-    # AUDIT
-    @audit_action(action_type="NOTIFICATION", params_args=["alert"])
-    async def register_notification(self, client_source: ClientType, user_id: str, alert: Alert):
-        pass
