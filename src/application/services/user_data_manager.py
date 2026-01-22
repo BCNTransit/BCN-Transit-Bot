@@ -6,6 +6,7 @@ from datetime import datetime
 from functools import wraps
 
 # SQLAlchemy & DB
+from fastapi import HTTPException
 from sqlalchemy import select, delete, update, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.infrastructure.database.database import async_session_factory
@@ -39,7 +40,7 @@ def audit_action(action_type: str, params_args: list = None):
     def decorator(func):
         @wraps(func)
         async def wrapper(self, *args, **kwargs):
-            # 1. Ejecución inmediata
+            # 1. EJECUCIÓN INMEDIATA (Lo primero es que funcione la lógica)
             try:
                 result = await func(self, *args, **kwargs)
                 status = "SUCCESS"
@@ -49,7 +50,7 @@ def audit_action(action_type: str, params_args: list = None):
                 status = "ERROR"
                 error_info = str(e)
 
-            # 2. Extracción de datos
+            # 2. EXTRACCIÓN DE DATOS (Protegido contra fallos)
             try:
                 sig = inspect.signature(func)
                 bound_args = sig.bind(self, *args, **kwargs)
@@ -60,28 +61,38 @@ def audit_action(action_type: str, params_args: list = None):
                 raw_source = func_args.get("client_source", "UNKNOWN")
                 if hasattr(raw_source, "value"):
                     source_str = str(raw_source.value)
-                elif isinstance(raw_source, ClientType):
-                    source_str = raw_source.value
+                elif hasattr(raw_source, "name"): # Para algunos Enums
+                    source_str = str(raw_source.name)
                 else:
                     source_str = str(raw_source)
 
-                # User ID externo (Installation ID o Telegram ID)
+                # User ID externo
                 raw_user_id = func_args.get("user_id")
                 user_id_ext = str(raw_user_id) if raw_user_id is not None else None
 
                 details = {"params": {}, "status": status}
                 if error_info: details["error"] = error_info
 
+                # --- AQUÍ ESTABA EL ERROR ---
                 if params_args:
                     for param_name in params_args:
-                        if param_name in func_args:
-                            val = func_args[param_name]
-                            if hasattr(val, "value"): details["params"][param_name] = str(val.value)
-                            elif hasattr(val, "model_dump_json"): details["params"][param_name] = val.model_dump_json()
-                            elif hasattr(val, "dict"): details["params"][param_name] = str(val.dict())
-                            else: details["params"][param_name] = str(val)
+                        # Usamos .get() en lugar de acceso directo [] para evitar KeyError
+                        val = func_args.get(param_name)
+                        
+                        if val is not None:
+                            if hasattr(val, "value"): 
+                                details["params"][param_name] = str(val.value)
+                            elif hasattr(val, "model_dump_json"): 
+                                details["params"][param_name] = val.model_dump_json()
+                            elif hasattr(val, "dict"): 
+                                details["params"][param_name] = str(val.dict())
+                            else: 
+                                details["params"][param_name] = str(val)
+                        else:
+                            details["params"][param_name] = "MISSING"
+                # -----------------------------
 
-                # 3. Guardado en background
+                # 3. GUARDADO EN BACKGROUND
                 if user_id_ext and hasattr(self, "save_audit_log_background"):
                     asyncio.create_task(
                         self.save_audit_log_background(
@@ -169,15 +180,16 @@ class UserDataManager:
             try:
                 db_user = None
                 is_new = False
-                source_val = client_source.value
+                final_username = username
 
-                # 1. BUSCAR USUARIO EXISTENTE
+                if client_source == ClientType.ANDROID and (not username or username == "android_user"):
+                    final_username = None
+
                 if client_source == ClientType.TELEGRAM:
                     stmt = select(DBUser).where(DBUser.telegram_id == str(user_id))
                     res = await session.execute(stmt)
                     db_user = res.scalars().first()
                 else:
-                    # Android: Buscamos por installation_id en dispositivos
                     stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
                     res = await session.execute(stmt)
                     db_user = res.scalars().first()
@@ -193,9 +205,8 @@ class UserDataManager:
                             language="es"
                         )
                         session.add(db_user)
-                        await session.flush() # Para tener ID
+                        await session.flush()
                     else:
-                        # Android Nuevo: Usuario + Dispositivo
                         db_user = DBUser(
                             source=UserSource.ANDROID,
                             username=username,
@@ -204,7 +215,6 @@ class UserDataManager:
                         session.add(db_user)
                         await session.flush()
                         
-                        # Creamos el dispositivo vinculado
                         new_device = DBUserDevice(
                             user_id=db_user.id,
                             installation_id=str(user_id),
@@ -212,19 +222,15 @@ class UserDataManager:
                         )
                         session.add(new_device)
                 else:
-                    # 3. ACTUALIZAR EXISTENTE
-                    if username:
-                        db_user.username = username
+                    if final_username and db_user.username != final_username:
+                        db_user.username = final_username                        
                     
-                    # Si es Android y ya existe el usuario, verificamos si el dispositivo existe
-                    if client_source != ClientType.TELEGRAM:
-                        # Buscamos este dispositivo específico
+                    if client_source == ClientType.ANDROID:
                         stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
                         res_dev = await session.execute(stmt_dev)
                         device = res_dev.scalars().first()
                         
                         if device:
-                            # Actualizamos token si ha cambiado
                             if fcm_token and device.fcm_token != fcm_token:
                                 device.fcm_token = fcm_token
                         else:
@@ -292,11 +298,57 @@ class UserDataManager:
                 ))
             return domain_users
 
-    @audit_action(action_type="GET_USER_RECEIVE_NOTIFICATIONS", params_args=[])
-    async def get_user_receive_notifications(self, client_source: ClientType, user_id: str) -> bool:
-        # En el nuevo modelo no tenías campo receive_notifications en DBUser, 
-        # asumimos True o añádelo a DBUser si lo necesitas.
-        return True 
+    async def update_user_receive_notifications(
+        self, 
+        client_source: str, 
+        user_id_ext: str, 
+        receive_notifications: bool
+    ) -> bool:
+        """
+        Actualiza la preferencia de notificaciones.
+        user_id_ext: Es el installation_id (Android)
+        """
+        async with async_session_factory() as session:
+            # 1. Resolvemos quién es el usuario real detrás del installation_id
+            internal_id = await self._resolve_user_internal_id(session, str(user_id_ext), str(client_source))
+            
+            if not internal_id:
+                # Si no existe, no podemos actualizar nada (aunque el frontend debería haber registrado el device antes)
+                raise HTTPException(status_code=404, detail="User not found for this device")
+
+            # 2. Obtenemos el usuario de la DB
+            stmt = select(DBUser).where(DBUser.id == internal_id)
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user:
+                # 3. Actualizamos el flag
+                user.receive_notifications = receive_notifications
+                await session.commit()
+                return user.receive_notifications
+            
+            return False
+
+    async def get_user_receive_notifications(
+        self, 
+        client_source: str, 
+        user_id_ext: str
+    ) -> bool:
+        """
+        Obtiene el estado actual de las notificaciones.
+        """
+        async with async_session_factory() as session:
+            internal_id = await self._resolve_user_internal_id(session, str(user_id_ext), str(client_source))
+            
+            if not internal_id:
+                return True # Default a True si no lo encontramos (o False, según tu lógica de negocio)
+
+            stmt = select(DBUser.receive_notifications).where(DBUser.id == internal_id)
+            result = await session.execute(stmt)
+            status = result.scalar()
+            
+            # Si es None (null en BD), devolvemos True por defecto
+            return status if status is not None else True
 
     # ---------------------------
     # FAVORITES
@@ -398,7 +450,6 @@ class UserDataManager:
             for db_user, db_fav, token in rows:
                 if not token: continue
                 
-                # Usamos el token como clave única de envío
                 key = token 
                 
                 if key not in grouped_data:
@@ -509,9 +560,8 @@ class UserDataManager:
     # HELPERS
     # ---------------------------
     def _to_domain_user(self, db_user: DBUser) -> User:
-        # User Domain Model necesita mapeo
         return User(
-            user_id=str(db_user.id), # Internal ID mapping
+            user_id=str(db_user.id),
             username=db_user.username,
             created_at=db_user.created_at,
             language=db_user.language,

@@ -42,6 +42,7 @@ class RegisterDeviceRequest(BaseModel):
 
     
 class GoogleLoginRequest(BaseModel):
+    user_id: str
     id_token: str
     fcm_token: str
 
@@ -279,7 +280,7 @@ def get_user_router(
     ):
         try:
             is_new = await user_data_manager.register_user(
-                client_source=ClientType.ANDROID.value,
+                client_source=ClientType.ANDROID,
                 user_id=request.user_id,
                 username=request.username,
                 fcm_token=request.fcm_token
@@ -298,6 +299,7 @@ def get_user_router(
             email = decoded_token.get('email')
             uid = decoded_token.get('uid')
             photo_url = decoded_token.get('picture')
+            name = decoded_token.get('name')
             
             if not email:
                 raise HTTPException(status_code=400, detail="El token no contiene email")
@@ -305,23 +307,29 @@ def get_user_router(
             user_repo = UserRepository(async_session_factory)
 
             user = await user_repo.get_by_email(email)
-            if user:                
-                device_exists = any(d.installation_id == request.fcm_token for d in user.devices)
-                
+            if user:
+                if user.username != name: 
+                    user.username = name
+                if user.photo_url != photo_url:
+                    user.photo_url = photo_url
+
+                device_exists = any(d.installation_id == request.user_id for d in user.devices)
+
                 if not device_exists:
                     new_device = UserDevice(
-                        installation_id=request.fcm_token,
+                        installation_id=request.user_id,
                         fcm_token=request.fcm_token
                     )
-                    await user_repo.add_device_to_user(user.user_id, new_device)
+                    await user_repo.add_device_to_user(user.id, new_device)
 
                 return {"status": "success", "user_id": user.id}
             
-            user_to_migrate = await user_repo.get_user_by_installation_id(request.fcm_token)
+            user_to_migrate = await user_repo.get_user_by_installation_id(request.user_id)
             if user_to_migrate:                
                 user_to_migrate.email = email
                 user_to_migrate.firebase_uid = uid
                 user_to_migrate.photo_url = photo_url
+                user_to_migrate.username = name
                 user_to_migrate.source = UserSource.ANDROID
                 
                 await user_repo.update(user_to_migrate)
@@ -332,11 +340,12 @@ def get_user_router(
                 email=email,
                 firebase_uid=uid,
                 photo_url=photo_url,
+                username=name,
                 source=UserSource.ANDROID
             )
             
             new_device = UserDevice(
-                installation_id=request.fcm_token,
+                installation_id=request.user_id,
                 fcm_token=request.fcm_token
             )
 

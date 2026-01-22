@@ -16,8 +16,9 @@ class UserSource(str, PyEnum):
 class DBUser(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)    
-    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, nullable=True)
+
     # GOOGLE
     email = Column(String, unique=True, index=True, nullable=True)
     firebase_uid = Column(String, unique=True, index=True, nullable=True)
@@ -32,6 +33,7 @@ class DBUser(Base):
     created_at = Column(DateTime, server_default=func.now())
     
     language = Column(String, default="es")
+    receive_notifications = Column(Boolean, default=True, nullable=False)
     
     # --- RELACIONES ---
     # Aquí faltaban las definiciones para que funcionen los back_populates de las otras tablas
