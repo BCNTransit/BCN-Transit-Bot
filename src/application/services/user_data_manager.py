@@ -396,6 +396,31 @@ class UserDataManager:
                 fav_items,
                 key=lambda f: self.FAVORITE_TYPE_ORDER.get(f.type, 999)
             )
+        
+    async def check_favorite_exists(
+        self, 
+        client_source: ClientType, 
+        user_id: str, 
+        transport_type: str, 
+        item_id: str
+    ) -> bool:
+        """Verifica si un favorito existe sin traer todos los datos."""
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            
+            if not internal_id: 
+                return False
+
+            stmt = select(DBFavorite.id).where(
+                and_(
+                    DBFavorite.user_id == internal_id,
+                    DBFavorite.transport_type == transport_type.lower(),
+                    DBFavorite.station_code == str(item_id)
+                )
+            )
+            result = await session.execute(stmt)
+            return result.first() is not None
 
     async def get_active_users_with_favorites(self) -> List[tuple[User, List[FavoriteResponse]]]:
         """

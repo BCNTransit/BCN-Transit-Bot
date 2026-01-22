@@ -397,9 +397,15 @@ def get_user_router(
         item_id: str = Query(..., description="Código del item a buscar")
     ) -> bool:
         try:
-            return await user_data_manager.has_favorite(uid, type=type, item_id=item_id)
+            exists = await user_data_manager.check_favorite_exists(
+                client_source=ClientType.ANDROID, 
+                user_id=uid, 
+                transport_type=type, 
+                item_id=item_id
+            )
+            return exists
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error checking favorite status")
         
     @router.post("/favorites", status_code=status.HTTP_201_CREATED)
     async def add_favorite(uid: str = Depends(get_current_user_uid), body: FavoriteResponse = Body(...)) -> bool:
