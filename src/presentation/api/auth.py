@@ -1,8 +1,7 @@
 import os
 import sys
-from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
-from firebase_admin import auth
+from fastapi import Depends, HTTPException, Header, Security, status
+from fastapi.security import APIKeyHeader, HTTPBearer
 
 security = HTTPBearer()
 
@@ -16,13 +15,13 @@ except KeyError:
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-async def get_current_user_uid(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    try:
-        decoded_token = auth.verify_id_token(token)
-        return decoded_token.get('uid') or decoded_token.get('sub') or decoded_token.get('user_id')
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido")
+async def get_current_user_uid(
+    x_user_id: str = Header(..., alias="X-User-Id", description="El installation_id generado por la App Android")
+) -> str:
+    if not x_user_id:
+        raise HTTPException(status_code=400, detail="Header X-User-Id es obligatorio")
+    
+    return x_user_id
     
 async def get_api_key(api_key_header: str = Security(api_key_header)):
     if api_key_header == SERVER_API_KEY:

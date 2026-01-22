@@ -6,7 +6,6 @@ from fastapi import APIRouter
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
 from pydantic import BaseModel
-from requests import Session
 
 from firebase_admin import auth
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
@@ -35,6 +34,13 @@ from src.infrastructure.database.database import get_db
 from src.infrastructure.database.database import async_session_factory
 
 
+
+class RegisterDeviceRequest(BaseModel):
+    user_id: str      # (installation_id for ANDROID, chat_id for TELEGRAM)
+    fcm_token: str = ""
+    username: str = ""
+
+    
 class GoogleLoginRequest(BaseModel):
     id_token: str
     fcm_token: str
@@ -267,31 +273,27 @@ def get_user_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.post("/register", status_code=status.HTTP_201_CREATED)
-    async def register_user(
-        request: RegisterRequest = Body(...),
-        uid: str = Depends(get_current_user_uid)
+    @router.post("/register-device", status_code=status.HTTP_201_CREATED)
+    async def register_device(
+        request: RegisterDeviceRequest = Body(...)
     ):
         try:
-            result = await user_data_manager.register_user(
+            is_new = await user_data_manager.register_user(
                 client_source=ClientType.ANDROID.value,
-                user_id=uid,
-                username='android_user',
-                fcm_token=request.fcmToken
+                user_id=request.user_id,
+                username=request.username,
+                fcm_token=request.fcm_token
             )
-            return result
+            return {"status": "ok", "is_new_user": is_new}
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error registering user: {str(e)}")
         
     @router.post("/auth/google")
     async def google_login(
-        request: GoogleLoginRequest, 
-        # Eliminamos 'db' directo, usamos el factory que usa el repo internamente
-        # Asumo que tienes una dependencia get_user_repository o instancias el repo aquí
+        request: GoogleLoginRequest,
     ):
         try:
-            # 1. Verificar Token con Firebase
             decoded_token = auth.verify_id_token(request.id_token)
             email = decoded_token.get('email')
             uid = decoded_token.get('uid')
@@ -300,54 +302,32 @@ def get_user_router(
             if not email:
                 raise HTTPException(status_code=400, detail="El token no contiene email")
 
-            # Instanciamos repo (o úsalo con Depends si lo tienes configurado)
             user_repo = UserRepository(async_session_factory)
 
-            # ---------------------------------------------------------
-            # ESCENARIO 1: LOGIN (El usuario ya existe por email)
-            # ---------------------------------------------------------
             user = await user_repo.get_by_email(email)
-
-            if user:
-                # LÓGICA DE MULTI-DISPOSITIVO:
-                # El usuario existe, pero... ¿está entrando desde un móvil nuevo?
-                # Verificamos si este dispositivo (installation_id) ya está en su lista.
-                
-                # NOTA: Uso request.fcm_token como installation_id temporalmente.
+            if user:                
                 device_exists = any(d.installation_id == request.fcm_token for d in user.devices)
                 
                 if not device_exists:
-                    # Es el mismo usuario, pero en un móvil nuevo. Registramos el dispositivo.
                     new_device = UserDevice(
-                        installation_id=request.fcm_token, # Idealmente UUID
+                        installation_id=request.fcm_token,
                         fcm_token=request.fcm_token
                     )
                     await user_repo.add_device_to_user(user.user_id, new_device)
 
                 return {"status": "success", "user_id": user.id}
             
-            # ---------------------------------------------------------
-            # ESCENARIO 2: MIGRACIÓN (Email nuevo, pero dispositivo conocido)
-            # ---------------------------------------------------------
-            # Buscamos si hay un usuario anónimo asociado a este dispositivo
             user_to_migrate = await user_repo.get_user_by_installation_id(request.fcm_token)
-
-            if user_to_migrate:
-                # ¡Encontrado! Este dispositivo pertenecía a un anónimo.
-                # Le ponemos nombre y apellidos (Email y UID).
-                
+            if user_to_migrate:                
                 user_to_migrate.email = email
                 user_to_migrate.firebase_uid = uid
                 user_to_migrate.photo_url = photo_url
-                user_to_migrate.source = UserSource.ANDROID # Confirmamos fuente
+                user_to_migrate.source = UserSource.ANDROID
                 
                 await user_repo.update(user_to_migrate)
                 
                 return {"status": "merged", "message": "Cuenta recuperada y vinculada"}
             
-            # ---------------------------------------------------------
-            # ESCENARIO 3: REGISTRO TOTAL (Usuario nuevo, Dispositivo nuevo)
-            # ---------------------------------------------------------
             new_user = DBUser(
                 email=email,
                 firebase_uid=uid,
@@ -356,8 +336,8 @@ def get_user_router(
             )
             
             new_device = UserDevice(
-                installation_id=request.fcm_token, # Tu llave para recuperarlo en el futuro
-                fcm_token=request.fcm_token        # La llave para notificarle
+                installation_id=request.fcm_token,
+                fcm_token=request.fcm_token
             )
 
             await user_repo.create_with_device(new_user, new_device)
@@ -430,7 +410,3 @@ def get_user_router(
             raise HTTPException(status_code=500, detail=str(e))
         
     return router
-
-
-class RegisterRequest(BaseModel):
-    fcmToken: str
