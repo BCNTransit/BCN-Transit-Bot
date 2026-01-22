@@ -16,5 +16,5 @@ class User(BaseModel):
     photo_url: Optional[str] = None
     auth_provider: str = "device"
 
-    already_notified: List[int] = Field(default_factory=list) 
+    already_notified: List[int] = Field(default_factory=list)
     fcm_token: str = ""

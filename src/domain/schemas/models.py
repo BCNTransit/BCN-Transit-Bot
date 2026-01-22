@@ -81,6 +81,7 @@ class Favorite(Base):
 
     latitude = Column(Float, nullable=True) 
     longitude = Column(Float, nullable=True)
+    alias = Column(String, nullable=True)
 
     user = relationship("DBUser", back_populates="favorites")
 

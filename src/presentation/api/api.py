@@ -1,11 +1,11 @@
-from typing import List
+from typing import List, Optional
 
 import asyncio
 from fastapi import APIRouter
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from firebase_admin import auth
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
@@ -45,6 +45,9 @@ class GoogleLoginRequest(BaseModel):
     user_id: str
     id_token: str
     fcm_token: str
+
+class UpdateFavoriteAliasRequest(BaseModel):
+    alias: Optional[str] = Field(None, max_length=50, description="El nuevo nombre personalizado para la estación")
 
 def get_metro_router(
     metro_service: MetroService
@@ -404,7 +407,31 @@ def get_user_router(
             return await user_data_manager.add_favorite(ClientType.ANDROID.value, uid, type=body.type, item=body)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
+
+    @router.patch("/favorites/{transport_type}/{station_code}/alias")
+    async def update_favorite_alias(
+        transport_type: str,
+        station_code: str,
+        body: UpdateFavoriteAliasRequest,
+        uid: str = Depends(get_current_user_uid)
+    ):
+        try:
+            success = await user_data_manager.update_favorite_alias(
+                client_source=ClientType.ANDROID,
+                user_id=uid,
+                transport_type=transport_type,
+                station_code=station_code,
+                new_alias=body.alias
+            )
+
+            if not success:
+                raise HTTPException(status_code=404, detail="Favorite not found")
+            
+            return {"status": "success", "alias": body.alias}
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Internal Server Error")
+    
     @router.delete("/favorites")
     async def delete_favorite(
         uid: str = Depends(get_current_user_uid),

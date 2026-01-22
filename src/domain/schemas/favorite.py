@@ -1,6 +1,6 @@
 
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -13,6 +13,7 @@ class FavoriteResponse(BaseModel):
     line_name_with_emoji: str
     line_code: str
     coordinates: List[float]
+    alias: Optional[str] = None
 
 class FavoriteDeleteRequest(BaseModel):
     type: str

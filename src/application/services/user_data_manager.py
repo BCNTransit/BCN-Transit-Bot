@@ -344,6 +344,38 @@ class UserDataManager:
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount > 0
+        
+    async def update_favorite_alias(
+        self, 
+        client_source: ClientType, 
+        user_id: str, 
+        transport_type: str, 
+        station_code: str, 
+        new_alias: str
+    ) -> bool:
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            
+            if not internal_id: 
+                return False
+
+            stmt = (
+                update(DBFavorite)
+                .where(
+                    and_(
+                        DBFavorite.user_id == internal_id,
+                        DBFavorite.transport_type == transport_type.lower(),
+                        DBFavorite.station_code == str(station_code)
+                    )
+                )
+                .values(alias=new_alias)
+            )
+            
+            result = await session.execute(stmt)
+            await session.commit()
+            
+            return result.rowcount > 0
 
     @audit_action(action_type="GET_FAVORITES", params_args=[])
     async def get_favorites_by_user(self, client_source: ClientType, user_id: str) -> List[FavoriteResponse]:
@@ -608,5 +640,6 @@ class UserDataManager:
             line_name=f.line_name or "",
             line_name_with_emoji=f.line_name_with_emoji or "",
             line_code=f.line_code or "",
-            coordinates=[f.latitude or 0, f.longitude or 0]
+            coordinates=[f.latitude or 0, f.longitude or 0],
+            alias=f.alias
         )
