@@ -367,8 +367,6 @@ def get_user_router(
                 uid,
                 status
             )
-            if not result:
-                raise HTTPException(status_code=404, detail="User not found")
             return result
         except HTTPException as he:
             raise he

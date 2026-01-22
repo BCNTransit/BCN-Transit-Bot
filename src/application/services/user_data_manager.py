@@ -306,29 +306,31 @@ class UserDataManager:
     ) -> bool:
         """
         Actualiza la preferencia de notificaciones.
-        user_id_ext: Es el installation_id (Android)
+        Devuelve el nuevo estado (True/False). Lanza error si no existe.
         """
         async with async_session_factory() as session:
-            # 1. Resolvemos quién es el usuario real detrás del installation_id
+            # 1. Resolvemos ID interno
             internal_id = await self._resolve_user_internal_id(session, str(user_id_ext), str(client_source))
             
             if not internal_id:
-                # Si no existe, no podemos actualizar nada (aunque el frontend debería haber registrado el device antes)
-                raise HTTPException(status_code=404, detail="User not found for this device")
+                raise HTTPException(status_code=404, detail="User device not found")
 
-            # 2. Obtenemos el usuario de la DB
+            # 2. Obtenemos el usuario
             stmt = select(DBUser).where(DBUser.id == internal_id)
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
-            if user:
-                # 3. Actualizamos el flag
-                user.receive_notifications = receive_notifications
-                await session.commit()
-                return user.receive_notifications
-            
-            return False
+            if not user:
+                # Si tenemos internal_id pero no user, algo grave pasa, pero es un 404
+                raise HTTPException(status_code=404, detail="User profile not found")
 
+            # 3. Actualizamos
+            user.receive_notifications = receive_notifications
+            await session.commit()
+            
+            # Devolvemos el valor, aunque sea False
+            return user.receive_notifications
+        
     async def get_user_receive_notifications(
         self, 
         client_source: str, 
