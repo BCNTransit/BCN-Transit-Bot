@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 import asyncio
 import html
@@ -7,12 +7,13 @@ import os
 
 from telegram import Bot
 from telegram.error import TelegramError
+from firebase_admin import messaging
 
 from src.domain.enums.clients import ClientType
 from src.domain.models.common.alert import Alert
+from src.domain.models.common.user import User
+from src.domain.schemas.favorite import FavoriteResponse
 from src.application.services.user_data_manager import UserDataManager
-from firebase_admin import messaging
-
 from src.core.logger import logger
 
 if TYPE_CHECKING:
@@ -29,14 +30,14 @@ class AlertsService:
         
         self._running = False
         self._task = None
+        self._semaphore = asyncio.Semaphore(10) 
 
     async def start(self):
         if self._running:
-            logger.warning("⚠️ DEBUG: El servicio YA estaba corriendo. Saliendo sin hacer nada.")
+            logger.warning("⚠️ DEBUG: El servicio YA estaba corriendo.")
             return
 
         self._running = True
-        
         try:
             self._task = asyncio.create_task(self.scheduler())
             logger.info(f"🚀 Alerts Service started. Interval: {self.interval}s")
@@ -44,7 +45,6 @@ class AlertsService:
             logger.error(f"❌ DEBUG: Error al crear la tarea: {e}")
 
     async def stop(self):
-        """Detiene el servicio correctamente"""
         logger.info("🛑 Stopping Alerts Service...")
         self._running = False
         if self._task:
@@ -55,7 +55,9 @@ class AlertsService:
                 pass
 
     async def send_push_notification(self, fcm_token: str, title: str, body: str, data: dict = None):
-        """Envía push notification en un hilo separado para no bloquear asyncio."""
+        """Envía push notification usando el Executor para no bloquear."""
+        if not fcm_token: return None
+        
         try:
             title = html.unescape(title)
             body = html.unescape(body)
@@ -68,83 +70,119 @@ class AlertsService:
             
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(None, messaging.send, message)
-            
-            logger.debug(f"Push sent: {response}")
             return response
         except Exception as e:
             logger.error(f"Error sending push to {fcm_token[:10]}...: {e}")
             return None
 
-    async def _notify_user(self, client_source: ClientType, user_id: str, fcm_token, alert):
-        """Lógica unitaria para notificar a un usuario."""
-        try:
-            await self.user_data_manager.update_notified_alerts(user_id, alert.id)
-            await self.user_data_manager.register_notification(client_source, user_id, alert)
+    async def _notify_user(self, user: User, alert: Alert):
+        """
+        Notifica a un usuario específico (Android o Telegram).
+        Usa semáforo para controlar la carga.
+        """
+        async with self._semaphore:
+            already_sent = await self.user_data_manager.has_notification_been_sent(user.user_id, alert.id)
+            if already_sent:
+                return
 
-            if fcm_token:
-                logger.info(f"Sending new PUSH NOTIFICATION to '{user_id}' with alert {alert.id}...")
-                await self.send_push_notification(
-                    fcm_token,
-                    title="BCN Transit | Nueva Alerta",
-                    body=Alert.format_app_alert(alert),
-                    data={"alert_id": str(alert.id), "click_action": "FLUTTER_NOTIFICATION_CLICK"}
-                )
-            else:
-                try:
-                    logger.info(f"Sending new TELEGRAM NOTIFICATION to '{user_id}' with alert {alert.id}...")
+            notification_sent = False
+
+            try:
+                # CASO A: ANDROID (Tiene token FCM)
+                if user.fcm_token:
+                    logger.info(f"🔔 Sending PUSH to {user.user_id[:8]}... (Alert {alert.id})")
+                    await self.send_push_notification(
+                        user.fcm_token,
+                        title="BCN Transit | Incidencia",
+                        body=Alert.format_app_alert(alert),
+                        data={
+                            "alert_id": str(alert.id), 
+                            "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                            "type": "incident"
+                        }
+                    )
+                    notification_sent = True
+
+                # CASO B: TELEGRAM (Tiene auth_provider telegram o user_id numérico)
+                elif user.auth_provider == "telegram" or (user.user_id.isdigit() and len(user.user_id) < 15):
+                    logger.info(f"✈️ Sending TELEGRAM to {user.user_id} (Alert {alert.id})")
                     await self.message_service.send_new_message_from_bot(
                         self.bot, 
-                        user_id, 
+                        user.user_id, 
                         Alert.format_html_alert(alert)
                     )
-                except TelegramError as te:
-                    logger.warning(f"Telegram error for user {user_id}: {te}")
+                    notification_sent = True
 
-            return True
-        except Exception as e:
-            logger.error(f"Failed to notify user {user_id}: {e}")
-            return False
+                if notification_sent:
+                    await self.user_data_manager.log_notification_sent(
+                        user_id=user.user_id,
+                        alert_id=alert.id,
+                        client_source=ClientType.ANDROID if user.fcm_token else ClientType.TELEGRAM
+                    )
+
+            except TelegramError as te:
+                if "Forbidden" in str(te):
+                    logger.warning(f"User {user.user_id} blocked the bot. Skipping.")
+                else:
+                    logger.error(f"Telegram error for {user.user_id}: {te}")
+            except Exception as e:
+                logger.error(f"Failed to notify user {user.user_id}: {e}")
+
+    def _is_alert_relevant_for_user(self, alert: Alert, favorites: List[FavoriteResponse]) -> bool:
+        """
+        Determina si una alerta afecta a alguno de los favoritos del usuario.
+        """
+        if not alert.transport_type: return False
+
+        for fav in favorites:
+            if fav.type != alert.transport_type.value:
+                continue
+
+            for entity in alert.affected_entities:
+                if entity.station_code and str(entity.station_code) == fav.station_code:
+                    return True
+                
+                if entity.line_code and fav.line_code and str(entity.line_code) == str(fav.line_code):
+                    return True
+
+        return False
 
     async def check_new_alerts(self):
         try:
             alerts = await self.user_data_manager.get_alerts(only_active=True)
-            if not alerts:
-                return
+            if not alerts: return
 
-            users_with_favs = await self.user_data_manager.get_active_users_with_favorites()
+            users_data = await self.user_data_manager.get_active_users_with_favorites()
+            
+            if not users_data: return
 
-            logger.info(f"Checking {len(alerts)} alerts for {len(users_with_favs)} users (with favorites)...")
+            logger.info(f"🔎 Checking {len(alerts)} alerts for {len(users_data)} active users...")
 
-            notifications_tasks = []
+            tasks = []
 
-            for user, user_favorites in users_with_favs:        
-                fav_codes = {f.station_code for f in user_favorites}
+            for user, favorites in users_data:
+                
+                if not user.receive_notifications:
+                    continue
 
                 for alert in alerts:
-                    if alert.id in user.already_notified:
+                    if not self._is_alert_relevant_for_user(alert, favorites):
                         continue
 
-                    should_notify = any(
-                        entity.station_code
-                        and str(entity.station_code) in fav_codes
-                        for entity in alert.affected_entities
-                    )
+                    is_already_notified = await self.user_data_manager.has_notification_been_sent(user.user_id, alert.id)
+                    
+                    if not is_already_notified:
+                        tasks.append(self._notify_user(user, alert))
 
-                    if should_notify:
-                        notifications_tasks.append(
-                            self._notify_user(ClientType.SYSTEM.value, user.user_id, user.fcm_token, alert)
-                        )
-
-            if notifications_tasks:
-                await asyncio.gather(*notifications_tasks, return_exceptions=True)
+            if tasks:
+                logger.info(f"📨 Dispatching {len(tasks)} notifications...")
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         except Exception as e:
             logger.exception(f"❌ Critical error checking alerts: {e}")
 
     async def scheduler(self):
-        """Bucle infinito controlado"""
         logger.info(f"Starting Alert Scheduler loop (Interval: {self.interval}s)")
-        
         while self._running:
             try:
                 await self.check_new_alerts()
@@ -155,5 +193,4 @@ class AlertsService:
                 await asyncio.sleep(self.interval)
             except asyncio.CancelledError:
                 break
-        
         logger.info("Scheduler loop exited.")

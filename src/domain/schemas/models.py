@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum as PyEnum
 from sqlalchemy import JSON, Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger, UniqueConstraint, Enum
 from sqlalchemy.orm import relationship
@@ -178,3 +179,15 @@ class DBStation(Base):
 
     connections_data = Column(JSON, nullable=True) 
     extra_data = Column(JSON, nullable=True)
+
+class DBNotificationLog(Base):
+    __tablename__ = "notification_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    alert_id = Column(String, nullable=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_user_alert', 'user_id', 'alert_id'),
+    )

@@ -18,3 +18,4 @@ psycopg2-binary
 streamlit
 plotly
 apscheduler
+pydantic[email]
