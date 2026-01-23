@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import List, Optional
 
+from src.infrastructure.external.api.amb_api_service import AmbApiService
 from src.domain.models.common.station import Station
 from src.domain.models.common.line import Line
 from src.domain.models.common.alert import Alert
@@ -40,7 +41,11 @@ class BusService(ServiceBase):
         await super().sync_stations(TransportType.BUS)
 
     async def fetch_lines(self) -> List[Line]:
-        return await self.tmb_api_service.get_bus_lines()
+        tmb_lines, amb_lines = await asyncio.gather(
+            self.tmb_api_service.get_bus_lines(),
+            AmbApiService.get_lines()
+        )
+        return tmb_lines + amb_lines
     
     async def fetch_stations(self) -> List[Station]:
         lines = await self.line_repository.get_all(TransportType.BUS.value)
@@ -60,9 +65,23 @@ class BusService(ServiceBase):
         tasks = [fetch_line_stops_safe(line.code) for line in lines]
         results = await asyncio.gather(*tasks)
         
-        api_stations = [stop for sublist in results for stop in sublist]
-            
-        return api_stations
+        tmb_api_stations = [stop for sublist in results for stop in sublist]
+        amb_stations = await AmbApiService.get_stations()
+
+        raw_stations_dirty = tmb_api_stations + amb_stations
+
+        unique_stations_map = {}
+
+        for raw in raw_stations_dirty:
+            unique_key = f"{TransportType.BUS.value}-{raw.line_code}-{raw.id}"            
+            if unique_key not in unique_stations_map:
+                unique_stations_map[unique_key] = raw
+
+        # Recuperamos la lista limpia
+        raw_stations_clean = list(unique_stations_map.values())
+
+        print(f"🧹 Limpieza: {len(raw_stations_dirty)} -> {len(raw_stations_clean)} estaciones únicas.")
+        return raw_stations_clean
     
     async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
         return await self.tmb_api_service.get_bus_line_stops(line_id)
@@ -136,3 +155,35 @@ class BusService(ServiceBase):
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stop_routes({stop_code}) -> iBus Data ({elapsed:.4f} s)")
         return data
+    
+
+    def _deduplicate_stations(self, stations: List[Station]) -> List[Station]:
+        seen_keys = set()
+        unique_list = []
+        
+        duplicates_count = 0
+
+        for station in stations:
+            # 🔑 LA CLAVE MÁGICA
+            # Define aquí qué hace que una estación sea "única" en tu DB.
+            # Generalmente es: ID de parada + Línea + Sentido
+            
+            # Normalizamos a string para evitar errores de "1" vs 1
+            s_id = str(station.id).strip()
+            l_code = str(station.line_code).strip().upper()
+            # OJO: Si direction viene como None, usaremos "" para que no falle el hash
+            direction = str(station.direction).strip() if station.direction else ""
+            
+            # Tupla inmutable que representa la identidad de la fila
+            unique_key = (s_id, l_code, direction)
+
+            if unique_key not in seen_keys:
+                seen_keys.add(unique_key)
+                unique_list.append(station)
+            else:
+                duplicates_count += 1
+                # Opcional: Imprimir para debug
+                # print(f"⚠️ Duplicado ignorado: {unique_key}")
+
+        print(f"🧹 Limpieza completada: Se eliminaron {duplicates_count} estaciones duplicadas.")
+        return unique_list
