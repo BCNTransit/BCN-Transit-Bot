@@ -88,7 +88,6 @@ class AlertsService:
             notification_sent = False
 
             try:
-                # CASO A: ANDROID (Tiene token FCM)
                 if user.fcm_token:
                     logger.info(f"🔔 Sending PUSH to {user.user_id[:8]}... (Alert {alert.id})")
                     await self.send_push_notification(
@@ -161,8 +160,11 @@ class AlertsService:
             tasks = []
 
             for user, favorites in users_data:
+                notifications_enabled = True
+                if user.settings:
+                    notifications_enabled = user.settings.general_notifications_enabled
                 
-                if not user.receive_notifications:
+                if not notifications_enabled:
                     continue
 
                 for alert in alerts:

@@ -20,28 +20,20 @@ class DBUser(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, nullable=True)
 
-    # GOOGLE
     email = Column(String, unique=True, index=True, nullable=True)
     firebase_uid = Column(String, unique=True, index=True, nullable=True)
     photo_url = Column(String, nullable=True)
-    
-    # TELEGRAM
     telegram_id = Column(String, unique=True, index=True, nullable=True)
-    
-    # METADATOS
-    # MEJORA: Usar Enum de SQLAlchemy para validar datos a nivel de BD/ORM
     source = Column(Enum(UserSource), default=UserSource.ANDROID, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     
-    language = Column(String, default="es")
-    receive_notifications = Column(Boolean, default=True, nullable=False)
+    settings = relationship("DBUserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="joined")
     
-    # --- RELACIONES ---
-    # Aquí faltaban las definiciones para que funcionen los back_populates de las otras tablas
     devices = relationship("UserDevice", back_populates="user", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
     audit_trail = relationship("AuditLog", back_populates="user")
     search_history = relationship("DBSearchHistory", back_populates="user")
+    user_cards = relationship("DBUserCard", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserDevice(Base):
@@ -198,11 +190,28 @@ class DBUserCard(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
     name = Column(String, nullable=False)
     expiration_date = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    user = relationship("DBUser", back_populates="user_cards")
+
     __table_args__ = (
         Index('idx_user_expiration', 'user_id', 'expiration_date'),
     )
+
+class DBUserSettings(Base):
+    __tablename__ = "user_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True, index=True)
+    
+    language = Column(String, default="es", nullable=False)
+    theme_mode = Column(String, default="system")
+    
+    general_notifications_enabled = Column(Boolean, default=True, nullable=False) 
+    
+    card_alerts_enabled = Column(Boolean, default=True)
+    card_alert_days_before = Column(Integer, default=3)
+    card_alert_hour = Column(Integer, default=9)
+
+    user = relationship("DBUser", back_populates="settings")
