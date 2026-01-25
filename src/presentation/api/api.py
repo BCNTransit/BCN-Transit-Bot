@@ -8,6 +8,7 @@ from fastapi.params import Body
 from pydantic import BaseModel, Field
 
 from firebase_admin import auth
+from src.domain.models.common.card import CardCreate, CardResponse
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
 from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.presentation.api.auth import get_current_user_uid
@@ -449,5 +450,25 @@ def get_user_router(
             return await user_data_manager.remove_favorite(ClientType.ANDROID.value, uid, type=type, item_id=item_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
+
+    @router.get("/cards", response_model=List[CardResponse])
+    async def get_my_cards(
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.get_user_cards(ClientType.ANDROID.value, uid)
+
+    @router.post("/cards", response_model=bool, status_code=status.HTTP_201_CREATED)
+    async def create_card(
+        card_data: CardCreate,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.create_user_card(ClientType.ANDROID.value, uid, card_data)
+
+    @router.delete("/cards/{card_id}", response_model=bool)
+    async def delete_card(
+        card_id: int,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.remove_user_card(ClientType.ANDROID.value, uid, card_id)
+
     return router

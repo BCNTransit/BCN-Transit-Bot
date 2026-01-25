@@ -192,3 +192,17 @@ class DBNotificationLog(Base):
     __table_args__ = (
         Index('idx_user_alert', 'user_id', 'alert_id'),
     )
+
+class DBUserCard(Base):
+    __tablename__ = "user_cards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    name = Column(String, nullable=False)
+    expiration_date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_user_expiration', 'user_id', 'expiration_date'),
+    )

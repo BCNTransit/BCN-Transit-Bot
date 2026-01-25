@@ -2,13 +2,14 @@ import asyncio
 import inspect
 import logging
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 
 # SQLAlchemy & DB
 from fastapi import HTTPException
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.domain.models.common.card import CardCreate, CardResponse
 from src.infrastructure.database.database import async_session_factory
 from src.domain.enums.clients import ClientType
 from src.domain.enums.transport_type import TransportType
@@ -19,7 +20,8 @@ from src.domain.models.common.alert import Alert, AffectedEntity, Publication
 
 # Database Models
 from src.domain.schemas.models import (
-    DBUser, 
+    DBUser,
+    DBUserCard, 
     UserDevice as DBUserDevice,
     Favorite as DBFavorite, 
     Alert as DBAlert, 
@@ -339,6 +341,65 @@ class UserDataManager:
                     DBFavorite.user_id == internal_id,
                     DBFavorite.transport_type == type.lower(),
                     DBFavorite.station_code == str(item_id)
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+        
+    async def get_user_cards(self, client_source: ClientType, user_id: str):
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            if not internal_id: return False
+
+            stmt = select(DBUserCard).where(DBUserCard.user_id == internal_id).order_by(DBUserCard.expiration_date.asc())
+            result = await session.execute(stmt)
+            db_cards = result.scalars().all()
+
+            card_items = []
+            for c in db_cards:
+                card_items.append(self._to_domain_card(c))
+            
+            return sorted(
+                card_items,
+                key=lambda c: c.created_at
+            )
+        
+    async def create_user_card(self, client_source: ClientType, user_id: str, item: CardCreate):
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            if not internal_id: return False
+
+            exp_date = item.expiration_date
+            if exp_date.tzinfo is not None:
+                exp_date = exp_date.astimezone(timezone.utc).replace(tzinfo=None)
+
+            try:
+                new_card = DBUserCard(
+                    user_id=internal_id,
+                    name=item.name,
+                    expiration_date=exp_date
+                )
+
+                session.add(new_card)
+                await session.commit()
+                return True
+            except Exception as e:
+                logger.error(f"Error adding user card: {e}")
+                return False
+            
+    async def remove_user_card(self, client_source: ClientType, user_id: str, item_id: int):
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            if not internal_id: return False
+
+            stmt = delete(DBUserCard).where(
+                and_(
+                    DBUserCard.user_id == internal_id,
+                    DBUserCard.id == item_id
                 )
             )
             result = await session.execute(stmt)
@@ -667,4 +728,12 @@ class UserDataManager:
             line_code=f.line_code or "",
             coordinates=[f.latitude or 0, f.longitude or 0],
             alias=f.alias
+        )
+    
+    def _to_domain_card(self, c: DBUserCard) -> CardResponse:
+        return CardResponse(
+            id=c.id,
+            created_at=c.created_at,
+            expiration_date=c.expiration_date,
+            name=c.name
         )
