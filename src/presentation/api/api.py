@@ -393,6 +393,13 @@ def get_user_router(
             return exists
         except Exception as e:
             raise HTTPException(status_code=500, detail="Error checking favorite status")
+    
+    @router.get("/favorites", response_model=List[FavoriteResponse])
+    async def get_favorites(uid: str = Depends(get_current_user_uid)):
+        try:
+            return await user_data_manager.get_favorites_by_user(ClientType.ANDROID.value, uid)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
         
     @router.post("/favorites", status_code=status.HTTP_201_CREATED)
     async def add_favorite(uid: str = Depends(get_current_user_uid), body: FavoriteResponse = Body(...)) -> bool:
