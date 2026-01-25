@@ -243,8 +243,9 @@ def get_results_router(
         if uid:
              asyncio.create_task(
                  user_data_manager.register_search(
-                     query=name, 
-                     user_id_ext=uid
+                     query=name,
+                     client_source=ClientType.ANDROID,
+                     user_id=uid
                  )
              )
 
@@ -267,7 +268,7 @@ def get_results_router(
     @router.get("/search/history")
     async def search_history(uid: str = Depends(get_current_user_uid)):
         if uid:
-            return await user_data_manager.get_search_history(user_id_ext=uid)
+            return await user_data_manager.get_search_history(client_source=ClientType.ANDROID, user_id=uid)
         return []
 
     return router
