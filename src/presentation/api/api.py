@@ -1,14 +1,15 @@
-from typing import List
+from typing import List, Optional
 
 import asyncio
 from fastapi import APIRouter
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.params import Body
-from pydantic import BaseModel
-from requests import Session
+from pydantic import BaseModel, Field
 
 from firebase_admin import auth
+from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
+from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
 from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.presentation.api.auth import get_current_user_uid
@@ -31,13 +32,23 @@ from src.domain.schemas.favorite import FavoriteResponse
 from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
 
-from src.infrastructure.database.database import get_db
 from src.infrastructure.database.database import async_session_factory
 
 
+
+class RegisterDeviceRequest(BaseModel):
+    user_id: str
+    fcm_token: str = ""
+    username: str = ""
+
+    
 class GoogleLoginRequest(BaseModel):
+    user_id: str
     id_token: str
     fcm_token: str
+
+class UpdateFavoriteAliasRequest(BaseModel):
+    alias: Optional[str] = Field(None, max_length=50, description="El nuevo nombre personalizado para la estación")
 
 def get_metro_router(
     metro_service: MetroService
@@ -233,8 +244,9 @@ def get_results_router(
         if uid:
              asyncio.create_task(
                  user_data_manager.register_search(
-                     query=name, 
-                     user_id_ext=uid
+                     query=name,
+                     client_source=ClientType.ANDROID,
+                     user_id=uid
                  )
              )
 
@@ -257,7 +269,7 @@ def get_results_router(
     @router.get("/search/history")
     async def search_history(uid: str = Depends(get_current_user_uid)):
         if uid:
-            return await user_data_manager.get_search_history(user_id_ext=uid)
+            return await user_data_manager.get_search_history(client_source=ClientType.ANDROID, user_id=uid)
         return []
 
     return router
@@ -267,97 +279,79 @@ def get_user_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.post("/register", status_code=status.HTTP_201_CREATED)
-    async def register_user(
-        request: RegisterRequest = Body(...),
-        uid: str = Depends(get_current_user_uid)
+    @router.post("/register-device", status_code=status.HTTP_201_CREATED)
+    async def register_device(
+        request: RegisterDeviceRequest = Body(...)
     ):
         try:
-            result = await user_data_manager.register_user(
-                client_source=ClientType.ANDROID.value,
-                user_id=uid,
-                username='android_user',
-                fcm_token=request.fcmToken
+            is_new = await user_data_manager.register_user(
+                client_source=ClientType.ANDROID,
+                user_id=request.user_id,
+                username=request.username,
+                fcm_token=request.fcm_token
             )
-            return result
+            return {"status": "ok", "is_new_user": is_new}
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error registering user: {str(e)}")
         
     @router.post("/auth/google")
     async def google_login(
-        request: GoogleLoginRequest, 
-        # Eliminamos 'db' directo, usamos el factory que usa el repo internamente
-        # Asumo que tienes una dependencia get_user_repository o instancias el repo aquí
+        request: GoogleLoginRequest,
     ):
         try:
-            # 1. Verificar Token con Firebase
             decoded_token = auth.verify_id_token(request.id_token)
             email = decoded_token.get('email')
             uid = decoded_token.get('uid')
             photo_url = decoded_token.get('picture')
+            name = decoded_token.get('name')
             
             if not email:
                 raise HTTPException(status_code=400, detail="El token no contiene email")
 
-            # Instanciamos repo (o úsalo con Depends si lo tienes configurado)
             user_repo = UserRepository(async_session_factory)
 
-            # ---------------------------------------------------------
-            # ESCENARIO 1: LOGIN (El usuario ya existe por email)
-            # ---------------------------------------------------------
             user = await user_repo.get_by_email(email)
-
             if user:
-                # LÓGICA DE MULTI-DISPOSITIVO:
-                # El usuario existe, pero... ¿está entrando desde un móvil nuevo?
-                # Verificamos si este dispositivo (installation_id) ya está en su lista.
-                
-                # NOTA: Uso request.fcm_token como installation_id temporalmente.
-                device_exists = any(d.installation_id == request.fcm_token for d in user.devices)
-                
+                if user.username != name: 
+                    user.username = name
+                if user.photo_url != photo_url:
+                    user.photo_url = photo_url
+
+                device_exists = any(d.installation_id == request.user_id for d in user.devices)
+
                 if not device_exists:
-                    # Es el mismo usuario, pero en un móvil nuevo. Registramos el dispositivo.
                     new_device = UserDevice(
-                        installation_id=request.fcm_token, # Idealmente UUID
+                        installation_id=request.user_id,
                         fcm_token=request.fcm_token
                     )
-                    await user_repo.add_device_to_user(user.user_id, new_device)
+                    await user_repo.add_device_to_user(user.id, new_device)
 
                 return {"status": "success", "user_id": user.id}
             
-            # ---------------------------------------------------------
-            # ESCENARIO 2: MIGRACIÓN (Email nuevo, pero dispositivo conocido)
-            # ---------------------------------------------------------
-            # Buscamos si hay un usuario anónimo asociado a este dispositivo
-            user_to_migrate = await user_repo.get_user_by_installation_id(request.fcm_token)
-
-            if user_to_migrate:
-                # ¡Encontrado! Este dispositivo pertenecía a un anónimo.
-                # Le ponemos nombre y apellidos (Email y UID).
-                
+            user_to_migrate = await user_repo.get_user_by_installation_id(request.user_id)
+            if user_to_migrate:                
                 user_to_migrate.email = email
                 user_to_migrate.firebase_uid = uid
                 user_to_migrate.photo_url = photo_url
-                user_to_migrate.source = UserSource.ANDROID # Confirmamos fuente
+                user_to_migrate.username = name
+                user_to_migrate.source = UserSource.ANDROID
                 
                 await user_repo.update(user_to_migrate)
                 
                 return {"status": "merged", "message": "Cuenta recuperada y vinculada"}
             
-            # ---------------------------------------------------------
-            # ESCENARIO 3: REGISTRO TOTAL (Usuario nuevo, Dispositivo nuevo)
-            # ---------------------------------------------------------
             new_user = DBUser(
                 email=email,
                 firebase_uid=uid,
                 photo_url=photo_url,
+                username=name,
                 source=UserSource.ANDROID
             )
             
             new_device = UserDevice(
-                installation_id=request.fcm_token, # Tu llave para recuperarlo en el futuro
-                fcm_token=request.fcm_token        # La llave para notificarle
+                installation_id=request.user_id,
+                fcm_token=request.fcm_token
             )
 
             await user_repo.create_with_device(new_user, new_device)
@@ -369,37 +363,20 @@ def get_user_router(
         except Exception as e:
             print(f"Error en login: {e}") 
             raise HTTPException(status_code=500, detail="Error interno del servidor")
-        
-    @router.post("/notifications/toggle/{status}")
-    async def toggle_user_notifications(status: bool, uid: str = Depends(get_current_user_uid)):
-        try:
-            result = await user_data_manager.update_user_receive_notifications(
-                ClientType.ANDROID.value,
-                uid,
-                status
-            )
-            if not result:
-                raise HTTPException(status_code=404, detail="User not found")
-            return result
-        except HTTPException as he:
-            raise he
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        
-    @router.get("/notifications/configuration")
-    async def get_user_notifications_configuration(uid: str = Depends(get_current_user_uid)) -> bool:
-        try:
-            return await user_data_manager.get_user_receive_notifications(ClientType.ANDROID.value, uid)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        
-    @router.get("/favorites", response_model=List[FavoriteResponse])
-    async def get_favorites(uid: str = Depends(get_current_user_uid)):
-        try:
-            return await user_data_manager.get_favorites_by_user(ClientType.ANDROID.value, uid)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        
+
+    @router.patch("/settings", response_model=bool)
+    async def update_settings(
+        settings_update: UserSettingsUpdate,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.update_user_settings(ClientType.ANDROID, uid, settings_update)
+    
+    @router.get("/settings", response_model=UserSettingsResponse)
+    async def get_settings(
+        user_id: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.get_user_settings(ClientType.ANDROID, user_id)
+
     @router.get("/favorites/exists")
     async def has_favorite(
         uid: str = Depends(get_current_user_uid),
@@ -407,7 +384,20 @@ def get_user_router(
         item_id: str = Query(..., description="Código del item a buscar")
     ) -> bool:
         try:
-            return await user_data_manager.has_favorite(uid, type=type, item_id=item_id)
+            exists = await user_data_manager.check_favorite_exists(
+                client_source=ClientType.ANDROID, 
+                user_id=uid, 
+                transport_type=type, 
+                item_id=item_id
+            )
+            return exists
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Error checking favorite status")
+    
+    @router.get("/favorites", response_model=List[FavoriteResponse])
+    async def get_favorites(uid: str = Depends(get_current_user_uid)):
+        try:
+            return await user_data_manager.get_favorites_by_user(ClientType.ANDROID.value, uid)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
         
@@ -417,7 +407,31 @@ def get_user_router(
             return await user_data_manager.add_favorite(ClientType.ANDROID.value, uid, type=body.type, item=body)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
+
+    @router.patch("/favorites/{transport_type}/{station_code}/alias")
+    async def update_favorite_alias(
+        transport_type: str,
+        station_code: str,
+        body: UpdateFavoriteAliasRequest,
+        uid: str = Depends(get_current_user_uid)
+    ):
+        try:
+            success = await user_data_manager.update_favorite_alias(
+                client_source=ClientType.ANDROID,
+                user_id=uid,
+                transport_type=transport_type,
+                station_code=station_code,
+                new_alias=body.alias
+            )
+
+            if not success:
+                raise HTTPException(status_code=404, detail="Favorite not found")
+            
+            return {"status": "success", "alias": body.alias}
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Internal Server Error")
+    
     @router.delete("/favorites")
     async def delete_favorite(
         uid: str = Depends(get_current_user_uid),
@@ -428,9 +442,32 @@ def get_user_router(
             return await user_data_manager.remove_favorite(ClientType.ANDROID.value, uid, type=type, item_id=item_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
+
+    @router.get("/cards", response_model=List[CardResponse])
+    async def get_my_cards(
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.get_user_cards(ClientType.ANDROID.value, uid)
+
+    @router.post("/cards", response_model=bool, status_code=status.HTTP_201_CREATED)
+    async def create_card(
+        card_data: CardCreate,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.create_user_card(ClientType.ANDROID.value, uid, card_data)
+    
+    @router.put("/cards", response_model=bool)
+    async def update_card(
+        card_data: CardUpdate,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.update_user_card(ClientType.ANDROID.value, uid, card_data)
+
+    @router.delete("/cards/{card_id}", response_model=bool)
+    async def delete_card(
+        card_id: int,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.remove_user_card(ClientType.ANDROID.value, uid, card_id)
+
     return router
-
-
-class RegisterRequest(BaseModel):
-    fcmToken: str

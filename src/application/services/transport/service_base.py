@@ -257,13 +257,17 @@ class ServiceBase:
 
         try:
             raw_alerts = await self.fetch_alerts()
+            if not raw_alerts:
+                return {}
+
             result = defaultdict(list)
             
             for alert in raw_alerts:
                 await self.user_data_manager.register_alert(transport_type, alert)
                 
-                for entity in alert.affected_entities:
-                    
+                entities = alert.affected_entities or []
+                
+                for entity in entities:
                     if entity.station_name:
                          result[entity.station_name].append(alert)
                          

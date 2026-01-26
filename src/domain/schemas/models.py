@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum as PyEnum
 from sqlalchemy import JSON, Column, Index, Integer, String, DateTime, ForeignKey, Boolean, Float, BigInteger, UniqueConstraint, Enum
 from sqlalchemy.orm import relationship
@@ -16,29 +17,23 @@ class UserSource(str, PyEnum):
 class DBUser(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)    
-    
-    # GOOGLE
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, nullable=True)
+
     email = Column(String, unique=True, index=True, nullable=True)
     firebase_uid = Column(String, unique=True, index=True, nullable=True)
     photo_url = Column(String, nullable=True)
-    
-    # TELEGRAM
     telegram_id = Column(String, unique=True, index=True, nullable=True)
-    
-    # METADATOS
-    # MEJORA: Usar Enum de SQLAlchemy para validar datos a nivel de BD/ORM
     source = Column(Enum(UserSource), default=UserSource.ANDROID, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     
-    language = Column(String, default="es")
+    settings = relationship("DBUserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="joined")
     
-    # --- RELACIONES ---
-    # Aquí faltaban las definiciones para que funcionen los back_populates de las otras tablas
     devices = relationship("UserDevice", back_populates="user", cascade="all, delete-orphan")
     favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
     audit_trail = relationship("AuditLog", back_populates="user")
     search_history = relationship("DBSearchHistory", back_populates="user")
+    user_cards = relationship("DBUserCard", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserDevice(Base):
@@ -78,6 +73,7 @@ class Favorite(Base):
 
     latitude = Column(Float, nullable=True) 
     longitude = Column(Float, nullable=True)
+    alias = Column(String, nullable=True)
 
     user = relationship("DBUser", back_populates="favorites")
 
@@ -176,3 +172,46 @@ class DBStation(Base):
 
     connections_data = Column(JSON, nullable=True) 
     extra_data = Column(JSON, nullable=True)
+
+class DBNotificationLog(Base):
+    __tablename__ = "notification_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    alert_id = Column(String, nullable=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_user_alert', 'user_id', 'alert_id'),
+    )
+
+class DBUserCard(Base):
+    __tablename__ = "user_cards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    expiration_date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("DBUser", back_populates="user_cards")
+
+    __table_args__ = (
+        Index('idx_user_expiration', 'user_id', 'expiration_date'),
+    )
+
+class DBUserSettings(Base):
+    __tablename__ = "user_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True, index=True)
+    
+    language = Column(String, default="es", nullable=False)
+    theme_mode = Column(String, default="system")
+    
+    general_notifications_enabled = Column(Boolean, default=True, nullable=False) 
+    
+    card_alerts_enabled = Column(Boolean, default=True)
+    card_alert_days_before = Column(Integer, default=3)
+    card_alert_hour = Column(Integer, default=9)
+
+    user = relationship("DBUser", back_populates="settings")

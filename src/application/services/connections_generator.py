@@ -19,7 +19,7 @@ class ConnectionsGenerator:
         self.repo = StationsRepository(async_session_factory)
 
     async def generate_and_save_connections(self):
-        logger.info("🔗 [ConnectionsGenerator] Iniciando cálculo de transbordos...")
+        logger.info("🔗 [ConnectionsGenerator] Iniciando cálculo de transbordos (mismo tipo de transporte)...")
         
         all_stations = await self.repo.get_all_raw()
         
@@ -42,6 +42,11 @@ class ConnectionsGenerator:
             for current_station in stations_in_group:
                 lines_list: List[Line] = []
                 
+                current_line = current_station.line
+
+                if not current_line:
+                    continue
+
                 for other_station in stations_in_group:
                     if current_station.id == other_station.id:
                         continue
@@ -50,24 +55,27 @@ class ConnectionsGenerator:
                         continue
 
                     line_sql = other_station.line
-                    if line_sql:
-                        line_dto = Line(
-                            id=line_sql.id,               # ej: "metro-L1"
-                            original_id=line_sql.original_id, # ej: "L1"
-                            code=line_sql.code,           # ej: "L1"
-                            name=line_sql.name,           # ej: "L1"
-                            color=line_sql.color,         # ej: "FF0000"
-                            transport_type=line_sql.transport_type,
-                            
-                            stations=[], 
-                            
-                            description=line_sql.description,
-                            origin=line_sql.origin,
-                            destination=line_sql.destination,
-                            has_alerts=False,
-                            extra_data=None
-                        )
-                        lines_list.append(line_dto)
+                    
+                    if not line_sql or current_line.transport_type != line_sql.transport_type:
+                        continue
+                    
+                    line_dto = Line(
+                        id=line_sql.id,               
+                        original_id=line_sql.original_id, 
+                        code=line_sql.code,           
+                        name=line_sql.name,           
+                        color=line_sql.color,         
+                        transport_type=line_sql.transport_type,
+                        
+                        stations=[], 
+                        
+                        description=line_sql.description,
+                        origin=line_sql.origin,
+                        destination=line_sql.destination,
+                        has_alerts=False,
+                        extra_data=None
+                    )
+                    lines_list.append(line_dto)
 
                 if lines_list:
                     connections_obj = Connections(lines=lines_list)
