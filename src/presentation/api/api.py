@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from firebase_admin import auth
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
-from src.domain.models.common.card import CardCreate, CardResponse
+from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
 from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.presentation.api.auth import get_current_user_uid
@@ -455,6 +455,13 @@ def get_user_router(
         uid: int = Depends(get_current_user_uid)
     ):
         return await user_data_manager.create_user_card(ClientType.ANDROID.value, uid, card_data)
+    
+    @router.put("/cards", response_model=bool)
+    async def update_card(
+        card_data: CardUpdate,
+        uid: int = Depends(get_current_user_uid)
+    ):
+        return await user_data_manager.update_user_card(ClientType.ANDROID.value, uid, card_data)
 
     @router.delete("/cards/{card_id}", response_model=bool)
     async def delete_card(

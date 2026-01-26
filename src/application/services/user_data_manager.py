@@ -9,7 +9,7 @@ from functools import wraps
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
-from src.domain.models.common.card import CardCreate, CardResponse
+from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.infrastructure.database.database import async_session_factory
 from src.domain.enums.clients import ClientType
 from src.domain.enums.transport_type import TransportType
@@ -462,6 +462,30 @@ class UserDataManager:
             except Exception as e:
                 logger.error(f"Error adding user card: {e}")
                 return False
+            
+    async def update_user_card(self, client_source: ClientType, user_id: str, item: CardUpdate) -> bool:
+        async with async_session_factory() as session:
+            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
+            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
+            
+            if not internal_id: 
+                return False
+
+            stmt = select(DBUserCard).where(DBUserCard.user_id == internal_id).filter(DBUserCard.id == item.id)
+            result = await session.execute(stmt)
+            db_card = result.scalars().first()
+
+            if not db_card:
+                return False
+
+            update_data = item.model_dump(exclude_unset=True)
+
+            for key, value in update_data.items():
+                setattr(db_card, key, value)
+                
+            await session.commit()
+
+            return True
             
     async def remove_user_card(self, client_source: ClientType, user_id: str, item_id: int):
         async with async_session_factory() as session:
