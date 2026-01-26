@@ -477,6 +477,10 @@ class UserDataManager:
 
             if not db_card:
                 return False
+            
+            exp_date = item.expiration_date
+            if item.expiration_date.tzinfo is not None:
+                item.expiration_date = exp_date.astimezone(timezone.utc).replace(tzinfo=None)
 
             update_data = item.model_dump(exclude_unset=True)
 
