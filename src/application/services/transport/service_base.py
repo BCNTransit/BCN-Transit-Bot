@@ -48,7 +48,7 @@ class ServiceBase:
             line = Line.model_validate(model)
             line.id = model.original_id
 
-            if not line.origin or not line.destination:
+            if not line.origin or not line.destination or line.origin == line.destination:
                 continue
             
             if model.extra_data and not line.category:
