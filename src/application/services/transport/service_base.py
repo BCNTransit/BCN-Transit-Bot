@@ -46,7 +46,10 @@ class ServiceBase:
         final_lines = []
         for model in db_lines:
             line = Line.model_validate(model)
-            line.id = model.original_id 
+            line.id = model.original_id
+
+            if not line.origin or not line.destination:
+                continue
             
             if model.extra_data and not line.category:
                 line.category = model.extra_data.get('category')
