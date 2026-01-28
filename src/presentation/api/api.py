@@ -284,6 +284,7 @@ def get_user_router(
     ):
         try:
             is_new = await user_data_manager.register_device(
+                client_source=ClientType.ANDROID,
                 installation_id=request.installation_id,
                 username=request.username,
                 fcm_token=request.fcm_token
