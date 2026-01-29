@@ -11,7 +11,7 @@ def create_app(
     fgc_service,
     user_data_manager
 ):
-    app = FastAPI(title="BCN Transit API")
+    app = FastAPI(title="BCN Transit API", version="1.0.0")
 
     app.include_router(get_metro_router(metro_service), prefix="/api/metro", tags=["Metro"], dependencies=[Depends(get_api_key)])
     app.include_router(get_bus_router(bus_service), prefix="/api/bus", tags=["Bus"], dependencies=[Depends(get_api_key)])
