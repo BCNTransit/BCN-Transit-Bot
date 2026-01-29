@@ -138,9 +138,36 @@ class UserDataManager:
             stmt = select(DBUser.id).where(DBUser.telegram_id == str(external_id))
             res = await session.execute(stmt)
             return res.scalars().first()
+        
         else:
-            # Para Android, el external_id es el installation_id
-            stmt = select(DBUserDevice.user_id).where(DBUserDevice.installation_id == str(external_id))
+            stmt_user = select(DBUser.id).where(DBUser.firebase_uid == str(external_id))
+            res_user = await session.execute(stmt_user)
+            user_id = res_user.scalars().first()
+            
+            if user_id:
+                return user_id
+            
+            stmt_device = (
+                select(DBUserDevice.user_id)
+                .where(DBUserDevice.installation_id == str(external_id))
+                .order_by(DBUserDevice.id.desc())
+            )
+            res_device = await session.execute(stmt_device)
+            return res_device.scalars().first()
+    
+    async def get_user_id_by_google_uid(self, google_uid: str) -> Optional[int]:
+        async with async_session_factory() as session:
+            stmt = select(DBUser.id).where(DBUser.firebase_uid == str(google_uid))
+            res = await session.execute(stmt)
+            return res.scalars().first()
+
+    async def get_user_id_by_installation_id(self, installation_id: str) -> Optional[int]:
+        async with async_session_factory() as session:
+            stmt = (
+                select(DBUserDevice.user_id)
+                .where(DBUserDevice.installation_id == str(installation_id))
+                .order_by(DBUserDevice.id.desc()) 
+            )
             res = await session.execute(stmt)
             return res.scalars().first()
 
@@ -164,8 +191,8 @@ class UserDataManager:
     # USERS & REGISTRATION
     # ---------------------------
 
-    @audit_action(action_type="REGISTER_USER", params_args=["username"])
-    async def register_user(self, client_source: ClientType, user_id: str, username: str, fcm_token: str = "") -> bool:
+    @audit_action(action_type="REGISTER_DEVICE", params_args=["username"])
+    async def register_device(self, client_source: ClientType, installation_id: str, username: str, fcm_token: str = "") -> bool:
         async with async_session_factory() as session:
             try:
                 db_user = None
@@ -177,11 +204,11 @@ class UserDataManager:
                     final_username = None
 
                 if client_source == ClientType.TELEGRAM:
-                    stmt = select(DBUser).where(DBUser.telegram_id == str(user_id))
+                    stmt = select(DBUser).where(DBUser.telegram_id == str(installation_id))
                     res = await session.execute(stmt)
                     db_user = res.scalars().first()
                 else:
-                    stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
+                    stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
                     res = await session.execute(stmt)
                     db_user = res.scalars().first()
 
@@ -190,7 +217,7 @@ class UserDataManager:
                     is_new = True
                     if client_source == ClientType.TELEGRAM:
                         db_user = DBUser(
-                            telegram_id=str(user_id),
+                            telegram_id=str(installation_id),
                             username=username,
                             source=UserSource.TELEGRAM
                         )
@@ -206,7 +233,7 @@ class UserDataManager:
                         
                         new_device = DBUserDevice(
                             user_id=db_user.id,
-                            installation_id=str(user_id),
+                            installation_id=str(installation_id),
                             fcm_token=fcm_token
                         )
                         session.add(new_device)
@@ -216,7 +243,7 @@ class UserDataManager:
                         db_user.username = final_username                        
                     
                     if client_source == ClientType.ANDROID:
-                        stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(user_id))
+                        stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
                         res_dev = await session.execute(stmt_dev)
                         device = res_dev.scalars().first()
                         
@@ -226,7 +253,7 @@ class UserDataManager:
                         else:
                             new_device = DBUserDevice(
                                 user_id=db_user.id,
-                                installation_id=str(user_id),
+                                installation_id=str(installation_id),
                                 fcm_token=fcm_token
                             )
                             session.add(new_device)
@@ -234,21 +261,18 @@ class UserDataManager:
                 await session.commit()
                 return is_new
             except Exception as e:
-                logger.error(f"Error registering user {user_id}: {e}")
+                logger.error(f"Error registering device {installation_id}: {e}")
                 await session.rollback()
                 return False
-
 
     # ---------------------------
     # FAVORITES
     # ---------------------------
 
     @audit_action(action_type="ADD_FAVORITE", params_args=["type", "item"])
-    async def add_favorite(self, client_source: ClientType, user_id: str, type: str, item: FavoriteResponse):
+    async def add_favorite(self, user_id: str, type: str, item: FavoriteResponse):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id:
+            if not user_id:
                 logger.warning(f"Cannot add favorite: User {user_id} not found in DB")
                 return False
 
@@ -257,7 +281,7 @@ class UserDataManager:
                 lon = item.coordinates[1] if item.coordinates and len(item.coordinates) > 1 else None
 
                 new_fav = DBFavorite(
-                    user_id=internal_id,
+                    user_id=user_id,
                     transport_type=type.lower(),
                     station_code=item.station_code,
                     station_name=item.station_name,
@@ -276,15 +300,13 @@ class UserDataManager:
                 return False
 
     @audit_action(action_type="REMOVE_FAVORITE", params_args=["type", "item_id"])
-    async def remove_favorite(self, client_source: ClientType, user_id: str, type: str, item_id: str):
+    async def remove_favorite(self, user_id: str, type: str, item_id: str):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return False
+            if not user_id: return False
 
             stmt = delete(DBFavorite).where(
                 and_(
-                    DBFavorite.user_id == internal_id,
+                    DBFavorite.user_id == user_id,
                     DBFavorite.transport_type == type.lower(),
                     DBFavorite.station_code == str(item_id)
                 )
@@ -294,25 +316,22 @@ class UserDataManager:
             return result.rowcount > 0
     
     async def update_favorite_alias(
-        self, 
-        client_source: ClientType, 
+        self,
         user_id: str, 
         transport_type: str, 
         station_code: str, 
         new_alias: str
     ) -> bool:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             
-            if not internal_id: 
+            if not user_id: 
                 return False
 
             stmt = (
                 update(DBFavorite)
                 .where(
                     and_(
-                        DBFavorite.user_id == internal_id,
+                        DBFavorite.user_id == user_id,
                         DBFavorite.transport_type == transport_type.lower(),
                         DBFavorite.station_code == str(station_code)
                     )
@@ -326,13 +345,11 @@ class UserDataManager:
             return result.rowcount > 0
 
     @audit_action(action_type="GET_FAVORITES", params_args=[])
-    async def get_favorites_by_user(self, client_source: ClientType, user_id: str) -> List[FavoriteResponse]:
+    async def get_favorites_by_user(self, user_id: str) -> List[FavoriteResponse]:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return []
+            if not user_id: return []
 
-            stmt = select(DBFavorite).where(DBFavorite.user_id == internal_id)
+            stmt = select(DBFavorite).where(DBFavorite.user_id == user_id)
             result = await session.execute(stmt)
             db_favs = result.scalars().all()
 
@@ -346,23 +363,20 @@ class UserDataManager:
             )
         
     async def check_favorite_exists(
-        self, 
-        client_source: ClientType, 
+        self,
         user_id: str, 
         transport_type: str, 
         item_id: str
     ) -> bool:
         """Verifica si un favorito existe sin traer todos los datos."""
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            
-            if not internal_id: 
+
+            if not user_id: 
                 return False
 
             stmt = select(DBFavorite.id).where(
                 and_(
-                    DBFavorite.user_id == internal_id,
+                    DBFavorite.user_id == user_id,
                     DBFavorite.transport_type == transport_type.lower(),
                     DBFavorite.station_code == str(item_id)
                 )
@@ -420,13 +434,11 @@ class UserDataManager:
     # ---------------------------
     # CARDS
     # ---------------------------
-    async def get_user_cards(self, client_source: ClientType, user_id: str):
+    async def get_user_cards(self, user_id: str):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return False
+            if not user_id: return []
 
-            stmt = select(DBUserCard).where(DBUserCard.user_id == internal_id).order_by(DBUserCard.expiration_date.asc())
+            stmt = select(DBUserCard).where(DBUserCard.user_id == user_id).order_by(DBUserCard.expiration_date.asc())
             result = await session.execute(stmt)
             db_cards = result.scalars().all()
 
@@ -439,11 +451,9 @@ class UserDataManager:
                 key=lambda c: c.created_at
             )
         
-    async def create_user_card(self, client_source: ClientType, user_id: str, item: CardCreate):
+    async def create_user_card(self, user_id: str, item: CardCreate):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return False
+            if not user_id: return False
 
             exp_date = item.expiration_date
             if exp_date.tzinfo is not None:
@@ -451,7 +461,7 @@ class UserDataManager:
 
             try:
                 new_card = DBUserCard(
-                    user_id=internal_id,
+                    user_id=user_id,
                     name=item.name,
                     expiration_date=exp_date
                 )
@@ -463,15 +473,13 @@ class UserDataManager:
                 logger.error(f"Error adding user card: {e}")
                 return False
             
-    async def update_user_card(self, client_source: ClientType, user_id: str, item: CardUpdate) -> bool:
+    async def update_user_card(self, user_id: str, item: CardUpdate) -> bool:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             
-            if not internal_id: 
+            if not user_id: 
                 return False
 
-            stmt = select(DBUserCard).where(DBUserCard.user_id == internal_id).filter(DBUserCard.id == item.id)
+            stmt = select(DBUserCard).where(DBUserCard.user_id == user_id).filter(DBUserCard.id == item.id)
             result = await session.execute(stmt)
             db_card = result.scalars().first()
 
@@ -491,15 +499,13 @@ class UserDataManager:
 
             return True
             
-    async def remove_user_card(self, client_source: ClientType, user_id: str, item_id: int):
+    async def remove_user_card(self, user_id: str, item_id: int):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return False
+            if not user_id: return False
 
             stmt = delete(DBUserCard).where(
                 and_(
-                    DBUserCard.user_id == internal_id,
+                    DBUserCard.user_id == user_id,
                     DBUserCard.id == item_id
                 )
             )
@@ -511,15 +517,13 @@ class UserDataManager:
     # ---------------------------
     # SETTINGS
     # ---------------------------
-    async def get_user_settings(self, client_source: ClientType, user_id: str) -> UserSettingsResponse:
+    async def get_user_settings(self, user_id: str) -> UserSettingsResponse:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             
-            if not internal_id:
+            if not user_id:
                 return UserSettingsResponse()
 
-            stmt = select(DBUserSettings).where(DBUserSettings.user_id == internal_id)
+            stmt = select(DBUserSettings).where(DBUserSettings.user_id == user_id)
             result = await session.execute(stmt)
             config = result.scalars().first()
 
@@ -543,20 +547,18 @@ class UserDataManager:
                 card_alert_hour=config.card_alert_hour
             )
 
-    async def update_user_settings(self, client_source: ClientType, user_id: str, item: UserSettingsUpdate) -> bool:
+    async def update_user_settings(self, user_id: str, item: UserSettingsUpdate) -> bool:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
             
-            if not internal_id: 
+            if not user_id: 
                 return False
 
-            stmt = select(DBUserSettings).where(DBUserSettings.user_id == internal_id)
+            stmt = select(DBUserSettings).where(DBUserSettings.user_id == user_id)
             result = await session.execute(stmt)
             db_settings = result.scalars().first()
 
             if not db_settings:
-                db_settings = DBUserSettings(user_id=internal_id)
+                db_settings = DBUserSettings(user_id=user_id)
                 session.add(db_settings)
 
             update_data = item.model_dump(exclude_unset=True)
@@ -572,26 +574,22 @@ class UserDataManager:
     # ---------------------------
     # SEARCH HISTORY & ALERTS (Sin cambios)
     # ---------------------------
-    async def register_search(self, query: str, client_source: ClientType, user_id: str):
+    async def register_search(self, query: str, user_id: str):
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if internal_id:
-                new_search = DBSearchHistory(user_id=internal_id, query=query)
+            if user_id:
+                new_search = DBSearchHistory(user_id=user_id, query=query)
                 session.add(new_search)
                 await session.commit()
                 return 1
             return 0
 
-    async def get_search_history(self, client_source: ClientType, user_id: str) -> List[str]:
+    async def get_search_history(self, user_id: str) -> List[str]:
         async with async_session_factory() as session:
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id: return []
+            if not user_id: return []
 
             stmt = (
                 select(DBSearchHistory.query)
-                .where(DBSearchHistory.user_id == internal_id)
+                .where(DBSearchHistory.user_id == user_id)
                 .group_by(DBSearchHistory.query)
                 .order_by(func.max(DBSearchHistory.timestamp).desc())
                 .limit(10)
@@ -690,17 +688,13 @@ class UserDataManager:
             result = await session.execute(stmt_log)
             return result.scalar_one_or_none() is not None
 
-    async def log_notification_sent(self, user_id: str, alert_id: str, client_source: ClientType):
+    async def log_notification_sent(self, user_id: str, alert_id: str):
         """
         Crea el registro en DBNotificationLog.
         Es capaz de manejar tanto external_ids (InstallationID/TelegramID) como internal_ids ("1").
         """
         async with async_session_factory() as session:
-            internal_id = None
-            source_str = client_source.value if hasattr(client_source, "value") else str(client_source)
-
-            internal_id = await self._resolve_user_internal_id(session, str(user_id), source_str)
-            if not internal_id and str(user_id).isdigit():
+            if str(user_id).isdigit():
                 stmt = select(DBUser.id).where(DBUser.id == int(user_id))
                 res = await session.execute(stmt)
                 internal_id = res.scalars().first()
@@ -722,7 +716,7 @@ class UserDataManager:
                     session.add(new_log)
                     await session.commit()
             else:
-                logger.warning(f"[LogNotification] No se pudo encontrar usuario para user_id='{user_id}' (Source: {source_str})")
+                logger.warning(f"[LogNotification] No se pudo encontrar usuario para user_id='{user_id}'")
 
     # ---------------------------
     # HELPERS

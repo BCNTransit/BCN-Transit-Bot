@@ -37,7 +37,7 @@ from src.infrastructure.database.database import async_session_factory
 
 
 class RegisterDeviceRequest(BaseModel):
-    user_id: str
+    installation_id: str
     fcm_token: str = ""
     username: str = ""
 
@@ -240,12 +240,11 @@ def get_results_router(
         return near_results
 
     @router.get("/search")
-    async def search_stations(name: str, uid: str = Depends(get_current_user_uid)):
+    async def search_stations(name: str, uid: int = Depends(get_current_user_uid)):
         if uid:
              asyncio.create_task(
                  user_data_manager.register_search(
                      query=name,
-                     client_source=ClientType.ANDROID,
                      user_id=uid
                  )
              )
@@ -269,7 +268,7 @@ def get_results_router(
     @router.get("/search/history")
     async def search_history(uid: str = Depends(get_current_user_uid)):
         if uid:
-            return await user_data_manager.get_search_history(client_source=ClientType.ANDROID, user_id=uid)
+            return await user_data_manager.get_search_history(user_id=uid)
         return []
 
     return router
@@ -284,16 +283,16 @@ def get_user_router(
         request: RegisterDeviceRequest = Body(...)
     ):
         try:
-            is_new = await user_data_manager.register_user(
+            is_new = await user_data_manager.register_device(
                 client_source=ClientType.ANDROID,
-                user_id=request.user_id,
+                installation_id=request.installation_id,
                 username=request.username,
                 fcm_token=request.fcm_token
             )
             return {"status": "ok", "is_new_user": is_new}
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error registering user: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error registering device: {str(e)}")
         
     @router.post("/auth/google")
     async def google_login(
@@ -369,13 +368,13 @@ def get_user_router(
         settings_update: UserSettingsUpdate,
         uid: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.update_user_settings(ClientType.ANDROID, uid, settings_update)
+        return await user_data_manager.update_user_settings(uid, settings_update)
     
     @router.get("/settings", response_model=UserSettingsResponse)
     async def get_settings(
         user_id: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.get_user_settings(ClientType.ANDROID, user_id)
+        return await user_data_manager.get_user_settings(user_id)
 
     @router.get("/favorites/exists")
     async def has_favorite(
@@ -385,7 +384,6 @@ def get_user_router(
     ) -> bool:
         try:
             exists = await user_data_manager.check_favorite_exists(
-                client_source=ClientType.ANDROID, 
                 user_id=uid, 
                 transport_type=type, 
                 item_id=item_id
@@ -397,14 +395,14 @@ def get_user_router(
     @router.get("/favorites", response_model=List[FavoriteResponse])
     async def get_favorites(uid: str = Depends(get_current_user_uid)):
         try:
-            return await user_data_manager.get_favorites_by_user(ClientType.ANDROID.value, uid)
+            return await user_data_manager.get_favorites_by_user(uid)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
         
     @router.post("/favorites", status_code=status.HTTP_201_CREATED)
     async def add_favorite(uid: str = Depends(get_current_user_uid), body: FavoriteResponse = Body(...)) -> bool:
         try:
-            return await user_data_manager.add_favorite(ClientType.ANDROID.value, uid, type=body.type, item=body)
+            return await user_data_manager.add_favorite(uid, type=body.type, item=body)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -417,7 +415,6 @@ def get_user_router(
     ):
         try:
             success = await user_data_manager.update_favorite_alias(
-                client_source=ClientType.ANDROID,
                 user_id=uid,
                 transport_type=transport_type,
                 station_code=station_code,
@@ -439,7 +436,7 @@ def get_user_router(
         item_id: str = Query(..., description="Código del item a eliminar")
     ) -> bool:
         try:
-            return await user_data_manager.remove_favorite(ClientType.ANDROID.value, uid, type=type, item_id=item_id)
+            return await user_data_manager.remove_favorite(uid, type=type, item_id=item_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -447,27 +444,27 @@ def get_user_router(
     async def get_my_cards(
         uid: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.get_user_cards(ClientType.ANDROID.value, uid)
+        return await user_data_manager.get_user_cards(uid)
 
     @router.post("/cards", response_model=bool, status_code=status.HTTP_201_CREATED)
     async def create_card(
         card_data: CardCreate,
         uid: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.create_user_card(ClientType.ANDROID.value, uid, card_data)
+        return await user_data_manager.create_user_card(uid, card_data)
     
     @router.put("/cards", response_model=bool)
     async def update_card(
         card_data: CardUpdate,
         uid: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.update_user_card(ClientType.ANDROID.value, uid, card_data)
+        return await user_data_manager.update_user_card(uid, card_data)
 
     @router.delete("/cards/{card_id}", response_model=bool)
     async def delete_card(
         card_id: int,
         uid: int = Depends(get_current_user_uid)
     ):
-        return await user_data_manager.remove_user_card(ClientType.ANDROID.value, uid, card_id)
+        return await user_data_manager.remove_user_card(uid, card_id)
 
     return router
