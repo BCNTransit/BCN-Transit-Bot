@@ -194,9 +194,8 @@ class UserDataManager:
 
     @audit_action(action_type="REGISTER_DEVICE", params_args=["username"])
     async def register_device(self, client_source: ClientType, installation_id: str, username: str, fcm_token: str = "") -> bool:
+        user_repo = UserRepository(async_session_factory)
         async with async_session_factory() as session:
-            user_repo = UserRepository(session)
-
             final_username = username
             if client_source == ClientType.ANDROID and (not username or username == "android_user"):
                 final_username = None
