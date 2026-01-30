@@ -30,7 +30,8 @@ class UserRepository:
         
     async def register_device_entry(self, user_id: int, installation_id: str, fcm_token: str):
         async with self.session_factory() as session:
-            await self._clean_duplicate_tokens(session, fcm_token, installation_id)
+            if fcm_token:
+                await self._clean_duplicate_tokens(session, fcm_token, installation_id)
 
             stmt = select(UserDevice).where(UserDevice.installation_id == str(installation_id))
             res = await session.execute(stmt)
@@ -157,11 +158,12 @@ class UserRepository:
         Elimina dispositivos viejos que usen el mismo token.
         """
         async with self.session_factory() as session:
-            await self._clean_duplicate_tokens(
-                session, 
-                device.fcm_token, 
-                device.installation_id
-            )
+            if device.fcm_token:
+                await self._clean_duplicate_tokens(
+                    session, 
+                    device.fcm_token, 
+                    device.installation_id
+                )
 
             session.add(user)
             user.devices.append(device)

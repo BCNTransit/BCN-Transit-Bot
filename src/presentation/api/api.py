@@ -38,7 +38,7 @@ from src.infrastructure.database.database import async_session_factory
 
 class RegisterDeviceRequest(BaseModel):
     installation_id: str
-    fcm_token: str = ""
+    fcm_token: str | None = None
     username: str = ""
 
     
