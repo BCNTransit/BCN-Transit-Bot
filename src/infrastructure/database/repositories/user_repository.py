@@ -27,6 +27,28 @@ class UserRepository:
             )
             result = await session.execute(stmt)
             return result.scalars().first()
+        
+    async def register_device_entry(self, user_id: int, installation_id: str, fcm_token: str):
+        async with self.session_factory() as session:
+            await self._clean_duplicate_tokens(session, fcm_token, installation_id)
+
+            stmt = select(UserDevice).where(UserDevice.installation_id == str(installation_id))
+            res = await session.execute(stmt)
+            device = res.scalars().first()
+
+            if device:
+                device.user_id = user_id
+                if fcm_token:
+                    device.fcm_token = fcm_token
+            else:
+                device = UserDevice(
+                    user_id=user_id, 
+                    installation_id=str(installation_id), 
+                    fcm_token=fcm_token
+                )
+                session.add(device)
+
+            await session.commit()
 
     async def merge_users(self, source_user_id: int, target_user_id: int):
         """
@@ -131,17 +153,21 @@ class UserRepository:
 
     async def create_with_device(self, user: DBUser, device: UserDevice) -> DBUser:
         """
-        Crea usuario y dispositivo en una sola transacción.
-        TAMBIÉN crea los UserSettings por defecto.
+        Crea usuario + dispositivo + settings.
+        Elimina dispositivos viejos que usen el mismo token.
         """
         async with self.session_factory() as session:
+            await self._clean_duplicate_tokens(
+                session, 
+                device.fcm_token, 
+                device.installation_id
+            )
+
             session.add(user)
             user.devices.append(device)
             
-            # Flush para obtener el ID del usuario recién creado
             await session.flush()
             
-            # Crear settings por defecto para evitar nulos
             default_settings = DBUserSettings(user_id=user.id)
             session.add(default_settings)
 
@@ -161,3 +187,15 @@ class UserRepository:
         async with self.session_factory() as session:
             await session.merge(user)
             await session.commit()
+
+    async def _clean_duplicate_tokens(self, session, fcm_token: str, current_installation_id: str):
+        if not fcm_token:
+            return
+
+        stmt = delete(UserDevice).where(
+            and_(
+                UserDevice.fcm_token == fcm_token,
+                UserDevice.installation_id != str(current_installation_id)
+            )
+        )
+        await session.execute(stmt)

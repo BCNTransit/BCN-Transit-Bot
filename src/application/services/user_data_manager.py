@@ -8,6 +8,7 @@ from functools import wraps
 # SQLAlchemy & DB
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from infrastructure.database.repositories.user_repository import UserRepository
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
 from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.infrastructure.database.database import async_session_factory
@@ -194,82 +195,44 @@ class UserDataManager:
     @audit_action(action_type="REGISTER_DEVICE", params_args=["username"])
     async def register_device(self, client_source: ClientType, installation_id: str, username: str, fcm_token: str = "") -> bool:
         async with async_session_factory() as session:
-            try:
-                db_user = None
-                is_new = False
-                final_username = username
+            user_repo = UserRepository(session)
 
-                # Limpieza de nombre hardcodeado
-                if client_source == ClientType.ANDROID and (not username or username == "android_user"):
-                    final_username = None
+            final_username = username
+            if client_source == ClientType.ANDROID and (not username or username == "android_user"):
+                final_username = None
 
-                if client_source == ClientType.TELEGRAM:
-                    stmt = select(DBUser).where(DBUser.telegram_id == str(installation_id))
-                    res = await session.execute(stmt)
-                    db_user = res.scalars().first()
-                else:
-                    stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
-                    res = await session.execute(stmt)
-                    db_user = res.scalars().first()
+            db_user = await user_repo.get_user_by_installation_id(str(installation_id))
 
-                # CREAR SI NO EXISTE
-                if not db_user:
-                    is_new = True
-                    if client_source == ClientType.TELEGRAM:
-                        db_user = DBUser(
-                            telegram_id=str(installation_id),
-                            username=username,
-                            source=UserSource.TELEGRAM
-                        )
-                        session.add(db_user)
-                        await session.flush()
-                    else:
-                        db_user = DBUser(
-                            source=UserSource.ANDROID,
-                            username=final_username
-                        )
-                        session.add(db_user)
-                        await session.flush()
-                        
-                        new_device = DBUserDevice(
-                            user_id=db_user.id,
-                            installation_id=str(installation_id),
-                            fcm_token=fcm_token
-                        )
-                        session.add(new_device)
+            is_new = False
 
-                    default_settings = DBUserSettings(
-                        user_id=db_user.id
+            if not db_user:
+                is_new = True
+                new_user = DBUser(
+                    source=UserSource.ANDROID,
+                    username=final_username
+                )
+                
+                new_device = DBUserDevice(
+                    installation_id=str(installation_id),
+                    fcm_token=fcm_token
+                )
+
+                await user_repo.create_with_device(new_user, new_device)
+
+            else:
+                if final_username and db_user.username != final_username:
+                    db_user.username = final_username
+                    await user_repo.update(db_user)
+                
+                if client_source == ClientType.ANDROID:
+                    await user_repo.register_device_entry(
+                        user_id=db_user.id,
+                        installation_id=str(installation_id),
+                        fcm_token=fcm_token
                     )
-                    session.add(default_settings)
-                else:
-                    # ACTUALIZAR EXISTENTE
-                    if final_username and db_user.username != final_username:
-                        db_user.username = final_username                        
-                    
-                    if client_source == ClientType.ANDROID:
-                        stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
-                        res_dev = await session.execute(stmt_dev)
-                        device = res_dev.scalars().first()
-                        
-                        if device:
-                            if fcm_token and device.fcm_token != fcm_token:
-                                device.fcm_token = fcm_token
-                        else:
-                            new_device = DBUserDevice(
-                                user_id=db_user.id,
-                                installation_id=str(installation_id),
-                                fcm_token=fcm_token
-                            )
-                            session.add(new_device)
 
-                await session.commit()
-                return is_new
-            except Exception as e:
-                logger.error(f"Error registering device {installation_id}: {e}")
-                await session.rollback()
-                return False
-
+            return is_new
+        
     # ---------------------------
     # FAVORITES
     # ---------------------------
