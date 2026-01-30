@@ -115,8 +115,7 @@ class AlertsService:
                 if notification_sent:
                     await self.user_data_manager.log_notification_sent(
                         user_id=user.user_id,
-                        alert_id=alert.id,
-                        client_source=ClientType.ANDROID if user.fcm_token else ClientType.TELEGRAM
+                        alert_id=alert.id
                     )
 
             except TelegramError as te:
@@ -160,7 +159,7 @@ class AlertsService:
             tasks = []
 
             for user, favorites in users_data:
-                notifications_enabled = True
+                notifications_enabled = False
                 if user.settings:
                     notifications_enabled = user.settings.general_notifications_enabled
                 

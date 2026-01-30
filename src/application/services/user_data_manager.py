@@ -237,6 +237,11 @@ class UserDataManager:
                             fcm_token=fcm_token
                         )
                         session.add(new_device)
+
+                    default_settings = DBUserSettings(
+                        user_id=db_user.id
+                    )
+                    session.add(default_settings)
                 else:
                     # ACTUALIZAR EXISTENTE
                     if final_username and db_user.username != final_username:
