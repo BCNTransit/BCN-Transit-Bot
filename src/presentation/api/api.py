@@ -299,6 +299,7 @@ def get_user_router(
         request: GoogleLoginRequest,
     ):
         try:
+            # 1. Verificar Token
             decoded_token = auth.verify_id_token(request.id_token)
             email = decoded_token.get('email')
             uid = decoded_token.get('uid')
@@ -310,36 +311,64 @@ def get_user_router(
 
             user_repo = UserRepository(async_session_factory)
 
-            user = await user_repo.get_by_email(email)
-            if user:
-                if user.username != name: 
-                    user.username = name
-                if user.photo_url != photo_url:
-                    user.photo_url = photo_url
+            # 2. Buscamos a los dos posibles usuarios
+            # El "Google User" (Cuenta destino)
+            existing_google_user = await user_repo.get_by_email(email)
+            # El "Anonymous User" (Cuenta origen, basada en el dispositivo actual)
+            current_anon_user = await user_repo.get_user_by_installation_id(request.user_id)
 
-                device_exists = any(d.installation_id == request.user_id for d in user.devices)
-
-                if not device_exists:
-                    new_device = UserDevice(
-                        installation_id=request.user_id,
-                        fcm_token=request.fcm_token
-                    )
-                    await user_repo.add_device_to_user(user.id, new_device)
-
-                return {"status": "success", "user_id": user.id}
-            
-            user_to_migrate = await user_repo.get_user_by_installation_id(request.user_id)
-            if user_to_migrate:                
-                user_to_migrate.email = email
-                user_to_migrate.firebase_uid = uid
-                user_to_migrate.photo_url = photo_url
-                user_to_migrate.username = name
-                user_to_migrate.source = UserSource.ANDROID
+            # --- ESCENARIO 1: MERGE (Fusión) ---
+            # Existe la cuenta de Google Y existe una cuenta anónima, y NO son la misma persona.
+            if existing_google_user and current_anon_user and existing_google_user.id != current_anon_user.id:
                 
-                await user_repo.update(user_to_migrate)
+                # Lógica compleja: Mover favoritos, dispositivos y settings del anónimo al de Google
+                await user_repo.merge_users(
+                    source_user_id=current_anon_user.id, 
+                    target_user_id=existing_google_user.id
+                )
                 
-                return {"status": "merged", "message": "Cuenta recuperada y vinculada"}
+                # Actualizamos perfil del usuario destino
+                existing_google_user.username = name
+                existing_google_user.photo_url = photo_url
+                existing_google_user.firebase_uid = uid
+                await user_repo.update(existing_google_user)
+
+                return {"status": "merged", "user_id": str(existing_google_user.id), "message": "Cuentas fusionadas"}
+
+            # --- ESCENARIO 2: LOGIN NORMAL ---
+            # Ya existe la cuenta de Google (y no hay anónimo o es el mismo)
+            if existing_google_user:
+                if existing_google_user.username != name: 
+                    existing_google_user.username = name
+                if existing_google_user.photo_url != photo_url:
+                    existing_google_user.photo_url = photo_url
+                if existing_google_user.firebase_uid != uid:
+                    existing_google_user.firebase_uid = uid
+
+                # Asegurar que el dispositivo actual esté registrado a este usuario
+                await user_repo.ensure_device_linked(
+                    user_id=existing_google_user.id,
+                    installation_id=request.user_id,
+                    fcm_token=request.fcm_token
+                )
+                
+                await user_repo.update(existing_google_user)
+                return {"status": "success", "user_id": str(existing_google_user.id)}
             
+            # --- ESCENARIO 3: PROMOCIÓN (Anonymous -> Google) ---
+            # No existe cuenta con ese email, pero sí el anónimo actual.
+            if current_anon_user:                
+                current_anon_user.email = email
+                current_anon_user.firebase_uid = uid
+                current_anon_user.photo_url = photo_url
+                current_anon_user.username = name
+                current_anon_user.source = UserSource.ANDROID
+                
+                await user_repo.update(current_anon_user)
+                return {"status": "promoted", "user_id": str(current_anon_user.id), "message": "Cuenta anónima convertida"}
+            
+            # --- ESCENARIO 4: REGISTRO LIMPIO ---
+            # Ni existe email ni existe anónimo.
             new_user = DBUser(
                 email=email,
                 firebase_uid=uid,
@@ -353,9 +382,8 @@ def get_user_router(
                 fcm_token=request.fcm_token
             )
 
-            await user_repo.create_with_device(new_user, new_device)
-            
-            return {"status": "created"}
+            created_user = await user_repo.create_with_device(new_user, new_device)
+            return {"status": "created", "user_id": str(created_user.id)}
 
         except auth.InvalidIdTokenError as e:
             raise HTTPException(status_code=401, detail=f"Token inválido: {e}")

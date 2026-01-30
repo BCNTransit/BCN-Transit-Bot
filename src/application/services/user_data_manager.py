@@ -416,7 +416,7 @@ class UserDataManager:
                 key = token 
                 
                 if key not in grouped_data:
-                    domain_user = self._to_domain_user(db_user, fcm_token=token)
+                    domain_user = self._to_domain_user(db_user, fcm_token=token, db_settings=db_settings)
 
                     grouped_data[key] = {
                         "user": domain_user,
@@ -656,41 +656,20 @@ class UserDataManager:
                 ))
             return domain_alerts
         
-    async def has_notification_been_sent(self, user_id_ext: str, alert_id: str) -> bool:
-        """
-        Verifica si existe un log en DBNotificationLog para este usuario y alerta.
-        """
-        async with async_session_factory() as session:
-            # Como user_id_ext puede ser un telegram_id o installation_id, primero resolvemos el ID interno
-            # Truco: Probamos resolver como System o unknown, o iteramos sources. 
-            # Para simplificar, buscamos el user primero por cualquiera de los medios.
-            
-            # Buscamos el ID interno del usuario
-            # (Puedes optimizar esto si pasas el internal_id desde el servicio, 
-            #  pero user_id_ext es lo que tenemos en el objeto User del dominio)
-            
-            # Intento 1: Es numérico (Telegram o ID interno viejo)
-            stmt_user = select(DBUser.id).where(
-                (DBUser.telegram_id == str(user_id_ext)) | 
-                (DBUser.id == int(user_id_ext) if user_id_ext.isdigit() else False)
-            )
-            res = await session.execute(stmt_user)
-            internal_id = res.scalars().first()
-            
-            if not internal_id:
-                stmt_dev = select(DBUserDevice.user_id).where(DBUserDevice.installation_id == str(user_id_ext))
-                res = await session.execute(stmt_dev)
-                internal_id = res.scalars().first()
-            
-            if not internal_id: return False
+    async def has_notification_been_sent(self, user_id_db: str, alert_id: str) -> bool:
+        if not user_id_db.isdigit():
+            return False
 
+        async with async_session_factory() as session:
             stmt_log = select(DBNotificationLog).where(
                 and_(
-                    DBNotificationLog.user_id == internal_id,
+                    DBNotificationLog.user_id == int(user_id_db),
                     DBNotificationLog.alert_id == str(alert_id)
                 )
             )
+            
             result = await session.execute(stmt_log)
+            
             return result.scalar_one_or_none() is not None
 
     async def log_notification_sent(self, user_id: str, alert_id: str):
@@ -726,11 +705,7 @@ class UserDataManager:
     # ---------------------------
     # HELPERS
     # ---------------------------
-    def _to_domain_user(self, db_user: DBUser, fcm_token: str = "") -> User:
-        """
-        Convierte DBUser (SQLAlchemy) a User (Pydantic).
-        Calcula el 'auth_provider' basado en los datos disponibles.
-        """
+    def _to_domain_user(self, db_user: DBUser, fcm_token: str = "", db_settings: DBUserSettings | None = None) -> User:
         auth_provider = "device"
         if db_user.source == UserSource.TELEGRAM:
             auth_provider = "telegram"
@@ -738,6 +713,17 @@ class UserDataManager:
             auth_provider = "google"
             
         user_id_str = db_user.telegram_id if db_user.telegram_id else str(db_user.id)
+
+        settings_dto = None
+        if db_settings:
+            settings_dto = UserSettingsResponse(
+                general_notifications_enabled=db_settings.general_notifications_enabled,
+                language=db_settings.language, 
+                theme_mode=db_settings.theme_mode,
+                card_alerts_enabled=db_settings.card_alerts_enabled,
+                card_alert_hour=db_settings.card_alert_hour,
+                card_alert_days_before=db_settings.card_alert_days_before
+            )
 
         return User(
             user_id=user_id_str,
@@ -748,7 +734,9 @@ class UserDataManager:
             firebase_uid=db_user.firebase_uid,
             photo_url=db_user.photo_url,
             auth_provider=auth_provider,
-            fcm_token=fcm_token
+            fcm_token=fcm_token,
+            
+            settings=settings_dto 
         )
 
     def _to_domain_favorite(self, f: DBFavorite, user_id_ext: str) -> FavoriteResponse:
