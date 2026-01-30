@@ -8,7 +8,7 @@ from functools import wraps
 # SQLAlchemy & DB
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from infrastructure.database.repositories.user_repository import UserRepository
+from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
 from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.infrastructure.database.database import async_session_factory
