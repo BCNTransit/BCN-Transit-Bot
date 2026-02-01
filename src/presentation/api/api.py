@@ -47,6 +47,9 @@ class GoogleLoginRequest(BaseModel):
     id_token: str
     fcm_token: str
 
+class LogoutRequest(BaseModel):
+    installation_id: str = Field(..., description="El UUID del dispositivo que cierra sesión")
+
 class UpdateFavoriteAliasRequest(BaseModel):
     alias: Optional[str] = Field(None, max_length=50, description="El nuevo nombre personalizado para la estación")
 
@@ -338,7 +341,7 @@ def get_user_router(
                 )
                 
                 await user_repo.update(existing_google_user)
-                return {"status": "merged", "user_id": str(existing_google_user.id), "message": "Cuentas fusionadas"}
+                return {"status": "merged", "user_id": str(existing_google_user.id), "message": "Accounts merged"}
 
             # --- ESCENARIO 2: LOGIN NORMAL ---
             # Caso: Usuario se loguea en un dispositivo limpio o que ya era suyo.
@@ -357,7 +360,7 @@ def get_user_router(
                 )
                 
                 await user_repo.update(existing_google_user)
-                return {"status": "success", "user_id": str(existing_google_user.id)}
+                return {"status": "success", "user_id": str(existing_google_user.id), "message": "Google account linked"}
             
             # --- ESCENARIO 3: PROMOCIÓN (Anonymous -> Google) ---
             # Caso: Usuario nuevo en el sistema, convertimos su usuario local en oficial.
@@ -376,7 +379,7 @@ def get_user_router(
                 )
                 
                 await user_repo.update(current_anon_user)
-                return {"status": "promoted", "user_id": str(current_anon_user.id), "message": "Cuenta anónima convertida"}
+                return {"status": "promoted", "user_id": str(current_anon_user.id), "message": "Anonymous account promoted"}
             
             # --- ESCENARIO 4: REGISTRO LIMPIO ---
             # Caso: Login directo sin usuario previo (Web o App reinstalada sin UUID previo).
@@ -402,6 +405,29 @@ def get_user_router(
         except Exception as e:
             print(f"Error en login: {e}") 
             raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+    @router.post("/auth/logout", status_code=status.HTTP_200_OK)
+    async def logout(
+        request: LogoutRequest,
+        uid: DBUser = Depends(get_current_user_uid)
+    ):
+        user_repo = UserRepository(async_session_factory)
+        
+        deleted = await user_repo.remove_device(
+            user_id=uid, 
+            installation_id=request.installation_id
+        )
+
+        if not deleted:
+            raise HTTPException(
+                status_code=404, 
+                detail="Device not found or not belonging to the user."
+            )
+
+        return {
+            "status": "success",
+            "message": "Logged out successfully. Device unlinked."
+        }
 
     @router.patch("/settings", response_model=bool)
     async def update_settings(
