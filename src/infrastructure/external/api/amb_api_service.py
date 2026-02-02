@@ -89,6 +89,22 @@ class AmbGtfsStore:
                 # 3. Joins pre-calculados
                 new_data['trips_routes'] = pd.merge(new_data['trips'], new_data['routes'], on='route_id', how='left')
 
+                # 4. CALENDARIOS (Vital para filtrar duplicados por día)
+                logger.info("📅 [AmbGtfsStore] Procesando Calendarios...")
+                
+                # calendar.txt define qué días de la semana opera un service_id
+                if 'calendar.txt' in z.namelist():
+                    new_data['calendar'] = pd.read_csv(z.open('calendar.txt'), dtype=str)
+                else:
+                    # A veces no existe y todo está en calendar_dates
+                    new_data['calendar'] = pd.DataFrame(columns=['service_id', 'start_date', 'end_date', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])
+
+                # calendar_dates.txt define excepciones (festivos, añadidos, eliminados)
+                if 'calendar_dates.txt' in z.namelist():
+                    new_data['calendar_dates'] = pd.read_csv(z.open('calendar_dates.txt'), dtype=str)
+                else:
+                    new_data['calendar_dates'] = pd.DataFrame(columns=['service_id', 'date', 'exception_type'])
+
             cls.data = new_data
             cls.is_loaded = True
             logger.info("✅ [AmbGtfsStore] Datos GTFS Estáticos cargados.")
@@ -180,6 +196,52 @@ class AmbApiService:
         if route_type == 3: return "bus"
         if route_type in [11, 12]: return "funicular"
         return "bus"
+    
+    @staticmethod
+    def _get_active_service_ids(date_obj: datetime) -> set:
+        """
+        Devuelve el conjunto de 'service_id' que operan en la fecha dada.
+        Cruza 'calendar.txt' (patrones semanales) con 'calendar_dates.txt' (excepciones).
+        """
+        data = AmbGtfsStore.data
+        if not data: return set()
+
+        date_str = date_obj.strftime("%Y%m%d") # YYYYMMDD
+        day_of_week = date_obj.strftime("%A").lower() # 'monday', 'tuesday'...
+
+        active_ids = set()
+
+        # 1. Base: calendar.txt (Patrón semanal)
+        # Verificamos si existe la tabla, ya que algunos GTFS solo usan calendar_dates
+        if 'calendar' in data and not data['calendar'].empty:
+            df_cal = data['calendar']
+            # Filtro vectorial eficiente
+            mask = (
+                (df_cal['start_date'] <= date_str) & 
+                (df_cal['end_date'] >= date_str) & 
+                (df_cal[day_of_week] == '1')
+            )
+            active_ids = set(df_cal[mask]['service_id'])
+
+        # 2. Excepciones: calendar_dates.txt (Festivos, refuerzos, cancelaciones)
+        if 'calendar_dates' in data and not data['calendar_dates'].empty:
+            df_dates = data['calendar_dates']
+            
+            # Type 1 = Added service (Servicio extra añadido para hoy)
+            added = df_dates[
+                (df_dates['date'] == date_str) & 
+                (df_dates['exception_type'] == '1')
+            ]
+            active_ids.update(added['service_id'])
+
+            # Type 2 = Removed service (Servicio cancelado hoy - ej: festivo que cae en lunes)
+            removed = df_dates[
+                (df_dates['date'] == date_str) & 
+                (df_dates['exception_type'] == '2')
+            ]
+            active_ids.difference_update(removed['service_id'])
+
+        return active_ids
 
     # ==========================================
     # MÉTODOS DE NEGOCIO (Refactorizados)
@@ -334,8 +396,8 @@ class AmbApiService:
     @staticmethod
     def _get_next_arrivals_sync(stop_code: str, max_results: int = 3) -> List[LineRoute]:
         """
-        Calcula horarios planificados Y aplica los retrasos en tiempo real (GTFS-RT).
-        Filtra buses que ya han pasado basándose en su tiempo real.
+        Calcula horarios planificados filtrados por DÍA ACTUAL + Retrasos GTFS-RT.
+        Incluye deduplicación de viajes.
         """
         data = AmbGtfsStore.data
         if not data:
@@ -346,17 +408,15 @@ class AmbApiService:
         tz = pytz.timezone('Europe/Madrid')
         now = datetime.now(tz)
         
-        # Timestamp exacto de ahora (para filtrar lo que ya pasó)
         current_timestamp = now.timestamp()
-        
-        # Timestamp de la medianoche de hoy (para calcular timestamps absolutos)
         today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         midnight_timestamp = today_midnight.timestamp()
-
-        # Segundos desde medianoche (para filtrar el DataFrame estático)
         current_seconds = now.hour * 3600 + now.minute * 60 + now.second
 
-        # 2. Buscar Parada (stop_code o stop_id)
+        # 2. Identificar servicios activos HOY (Fix duplicados por calendario)
+        active_service_ids = AmbApiService._get_active_service_ids(now)
+        
+        # 3. Buscar Parada
         df_stops = data['stops']
         mask_stop = (df_stops['stop_code'] == stop_code) | (df_stops['stop_id'] == stop_code)
         target_stops = df_stops[mask_stop]
@@ -367,14 +427,10 @@ class AmbApiService:
         
         target_ids = target_stops['stop_id'].unique()
 
-        # 3. Filtrar Stop Times (Estático)
+        # 4. Filtrar Stop Times (Ventana temporal)
         df_st = data['stop_times']
-        
-        # Ampliamos la ventana hacia atrás (-600s = 10 min) para capturar buses muy retrasados.
-        # Si un bus debía pasar a las 12:00 y son las 12:05, pero lleva 10 min de retraso,
-        # llegará a las 12:10. Necesitamos que el filtro estático lo incluya.
-        window_future = 7200 # 2 horas
-        window_past = 600    # 10 minutos atrás
+        window_future = 7200 # 2h futuro
+        window_past = 600    # 10m pasado (para pillar retrasados)
         
         mask_times = (
             (df_st['stop_id'].isin(target_ids)) &
@@ -386,21 +442,30 @@ class AmbApiService:
         if candidates.empty:
             return []
 
-        # 4. Joins con Metadatos (Trips, Routes, Agency)
+        # 5. Joins con Metadatos
         df_trips_routes = data['trips_routes']
-        df_full = pd.merge(candidates, df_trips_routes, on='trip_id', how='left')
         
+        # === FILTRO CRÍTICO ===
+        # Antes de hacer el merge masivo, filtramos df_trips_routes solo con servicios de HOY
+        # Esto elimina los viajes de "Sábados" si hoy es "Lunes".
+        valid_trips_mask = df_trips_routes['service_id'].isin(active_service_ids)
+        df_trips_filtered = df_trips_routes[valid_trips_mask]
+        
+        df_full = pd.merge(candidates, df_trips_filtered, on='trip_id', how='inner')
+        # ======================
+
+        if df_full.empty:
+            return []
+        
+        # Join con Agency
         df_agency = data['agency']
         if 'agency_id' in df_full.columns:
              df_full = pd.merge(df_full, df_agency[['agency_id', 'agency_name']], on='agency_id', how='left')
         else:
              df_full['agency_name'] = "AMB"
 
-        # NOTA: No ordenamos el DataFrame aquí porque el orden real depende del delay individual
-        
         routes_list: List[LineRoute] = []
         
-        # Agrupación por Línea y Destino
         group_cols = ['route_id', 'trip_headsign', 'route_short_name', 'route_long_name', 'route_color', 'route_type', 'agency_name']
         
         for keys, group in df_full.groupby(group_cols, sort=False):
@@ -408,23 +473,19 @@ class AmbApiService:
             
             valid_trips_objs = []
             
-            # Iteramos sobre TODOS los candidatos de esta línea
             for _, trip in group.iterrows():
                 trip_id = str(trip['trip_id'])
                 arr_sec_static = int(trip['arrival_seconds'])
                 
-                # --- LÓGICA REAL TIME ---
-                # A. Obtener delay
+                # A. Real Time
                 delay = AmbGtfsStore.realtime_delays.get(trip_id, 0)
                 is_rt = trip_id in AmbGtfsStore.realtime_delays
                 
-                # B. Calcular Timestamp Real
+                # B. Timestamp
                 base_ts = int(midnight_timestamp + arr_sec_static)
                 final_ts = base_ts + delay
                 
-                # C. FILTRO "YA PASÓ"
-                # Si la hora real de llegada es anterior a "ahora - 30s", lo descartamos.
-                # (Damos 30s de margen para no borrar el bus justo cuando está en la parada)
+                # C. Filtro "Ya pasó" (Margen 30s)
                 if final_ts < (current_timestamp - 30):
                     continue
                 
@@ -435,18 +496,29 @@ class AmbApiService:
                     delay_seconds=delay
                 ))
 
-            # Si no quedan viajes válidos futuros, saltamos esta línea
             if not valid_trips_objs:
                 continue
 
-            # --- ORDENAR Y CORTAR ---
-            # 1. Ordenamos por tiempo REAL de llegada (no por el estático)
-            valid_trips_objs.sort(key=lambda x: x.arrival_time)
+            # === DEDUPLICACIÓN DE HORARIOS ===
+            # Si el GTFS tiene suciedad y muestra 2 buses llegando al mismo segundo exacto,
+            # nos quedamos solo con uno (preferiblemente el que tenga RealTime).
+            unique_schedule = {}
+            for t in valid_trips_objs:
+                if t.arrival_time not in unique_schedule:
+                    unique_schedule[t.arrival_time] = t
+                else:
+                    # Si colisionan, nos quedamos el que sea RT
+                    if t.is_real_time and not unique_schedule[t.arrival_time].is_real_time:
+                        unique_schedule[t.arrival_time] = t
             
-            # 2. Ahora sí, nos quedamos con los próximos N
+            valid_trips_objs = list(unique_schedule.values())
+            # =================================
+
+            # Ordenar y Cortar
+            valid_trips_objs.sort(key=lambda x: x.arrival_time)
             final_trips = valid_trips_objs[:max_results]
 
-            # --- DATOS VISUALES ---
+            # Visuales
             r_short = str(r_short) if pd.notna(r_short) else ""
             r_long = str(r_long) if pd.notna(r_long) else ""
             display_name = r_short if r_short else r_long
@@ -471,7 +543,7 @@ class AmbApiService:
                 route_id=str(r_id),
                 line_id=str(r_id),
                 line_code=display_name,
-                line_name=display_name, # A veces display_name es mejor que r_long
+                line_name=display_name,
                 line_type=t_type_enum,
                 color=color_hex,
                 destination=headsign_str,
@@ -479,7 +551,7 @@ class AmbApiService:
                 name_with_emoji=f"{t_type_enum.value} {display_name}"
             ))
 
-        # (Opcional) Ordenar las líneas para que aparezca primero la que tiene el bus más próximo
+        # Ordenar líneas por proximidad del primer bus
         routes_list.sort(key=lambda x: x.next_trips[0].arrival_time if x.next_trips else 9999999999)
 
         return routes_list
