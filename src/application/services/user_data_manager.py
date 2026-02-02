@@ -1,13 +1,14 @@
 import asyncio
 import inspect
 import logging
-from typing import List, Optional
-from datetime import datetime, timezone
+from typing import List, Optional, Tuple
+from datetime import date, datetime, time, timezone
 from functools import wraps
 
 # SQLAlchemy & DB
 from sqlalchemy import select, delete, update, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.infrastructure.database.repositories.user_repository import UserRepository
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
 from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.infrastructure.database.database import async_session_factory
@@ -193,78 +194,44 @@ class UserDataManager:
 
     @audit_action(action_type="REGISTER_DEVICE", params_args=["username"])
     async def register_device(self, client_source: ClientType, installation_id: str, username: str, fcm_token: str = "") -> bool:
+        user_repo = UserRepository(async_session_factory)
         async with async_session_factory() as session:
-            try:
-                db_user = None
-                is_new = False
-                final_username = username
+            final_username = username
+            if client_source == ClientType.ANDROID and (not username or username == "android_user"):
+                final_username = None
 
-                # Limpieza de nombre hardcodeado
-                if client_source == ClientType.ANDROID and (not username or username == "android_user"):
-                    final_username = None
+            db_user = await user_repo.get_user_by_installation_id(str(installation_id))
 
-                if client_source == ClientType.TELEGRAM:
-                    stmt = select(DBUser).where(DBUser.telegram_id == str(installation_id))
-                    res = await session.execute(stmt)
-                    db_user = res.scalars().first()
-                else:
-                    stmt = select(DBUser).join(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
-                    res = await session.execute(stmt)
-                    db_user = res.scalars().first()
+            is_new = False
 
-                # CREAR SI NO EXISTE
-                if not db_user:
-                    is_new = True
-                    if client_source == ClientType.TELEGRAM:
-                        db_user = DBUser(
-                            telegram_id=str(installation_id),
-                            username=username,
-                            source=UserSource.TELEGRAM
-                        )
-                        session.add(db_user)
-                        await session.flush()
-                    else:
-                        db_user = DBUser(
-                            source=UserSource.ANDROID,
-                            username=final_username
-                        )
-                        session.add(db_user)
-                        await session.flush()
-                        
-                        new_device = DBUserDevice(
-                            user_id=db_user.id,
-                            installation_id=str(installation_id),
-                            fcm_token=fcm_token
-                        )
-                        session.add(new_device)
-                else:
-                    # ACTUALIZAR EXISTENTE
-                    if final_username and db_user.username != final_username:
-                        db_user.username = final_username                        
-                    
-                    if client_source == ClientType.ANDROID:
-                        stmt_dev = select(DBUserDevice).where(DBUserDevice.installation_id == str(installation_id))
-                        res_dev = await session.execute(stmt_dev)
-                        device = res_dev.scalars().first()
-                        
-                        if device:
-                            if fcm_token and device.fcm_token != fcm_token:
-                                device.fcm_token = fcm_token
-                        else:
-                            new_device = DBUserDevice(
-                                user_id=db_user.id,
-                                installation_id=str(installation_id),
-                                fcm_token=fcm_token
-                            )
-                            session.add(new_device)
+            if not db_user:
+                is_new = True
+                new_user = DBUser(
+                    source=UserSource.ANDROID,
+                    username=final_username
+                )
+                
+                new_device = DBUserDevice(
+                    installation_id=str(installation_id),
+                    fcm_token=fcm_token
+                )
 
-                await session.commit()
-                return is_new
-            except Exception as e:
-                logger.error(f"Error registering device {installation_id}: {e}")
-                await session.rollback()
-                return False
+                await user_repo.create_with_device(new_user, new_device)
 
+            else:
+                if final_username and db_user.username != final_username:
+                    db_user.username = final_username
+                    await user_repo.update(db_user)
+                
+                if client_source == ClientType.ANDROID:
+                    await user_repo.register_device_entry(
+                        user_id=db_user.id,
+                        installation_id=str(installation_id),
+                        fcm_token=fcm_token
+                    )
+
+            return is_new
+        
     # ---------------------------
     # FAVORITES
     # ---------------------------
@@ -411,7 +378,7 @@ class UserDataManager:
                 key = token 
                 
                 if key not in grouped_data:
-                    domain_user = self._to_domain_user(db_user, fcm_token=token)
+                    domain_user = self._to_domain_user(db_user, fcm_token=token, db_settings=db_settings)
 
                     grouped_data[key] = {
                         "user": domain_user,
@@ -512,6 +479,61 @@ class UserDataManager:
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount > 0
+        
+    async def get_users_for_card_alerts(self, current_hour: int) -> List[Tuple[User, DBUserSettings]]:
+        async with async_session_factory() as session:
+            stmt = (
+                select(DBUser, DBUserSettings, DBUserDevice)
+                .join(DBUserSettings, DBUser.id == DBUserSettings.user_id)
+                .join(DBUserDevice, DBUser.id == DBUserDevice.user_id)
+                .where(
+                    and_(
+                        DBUserSettings.general_notifications_enabled == True,
+                        DBUserSettings.card_alerts_enabled == True,
+                        DBUserSettings.card_alert_hour == current_hour
+                    )
+                )
+            )
+            
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            users_data = []
+            for row in rows:
+                db_user = row.DBUser
+                db_settings = row.DBUserSettings
+                db_device = row.UserDevice
+                
+                domain_user = self._to_domain_user(
+                    db_user=db_user,
+                    fcm_token=db_device.fcm_token,
+                    db_settings=db_settings
+                )
+                
+                users_data.append((domain_user, db_settings))
+
+            return users_data
+    
+    async def get_user_cards_expiring_on(self, user_id: int, target_date: date) -> List[DBUserCard]:
+        """
+        Obtiene las tarjetas de un usuario que caducan en el día exacto especificado.
+        """
+        async with async_session_factory() as session:
+            start_of_day = datetime.combine(target_date, time.min)
+            end_of_day = datetime.combine(target_date, time.max)
+
+            stmt = (
+                select(DBUserCard)
+                .where(
+                    and_(
+                        DBUserCard.user_id == user_id,
+                        DBUserCard.expiration_date >= start_of_day,
+                        DBUserCard.expiration_date <= end_of_day
+                    )
+                )
+            )
+            result = await session.execute(stmt)
+            return result.scalars().all()
         
 
     # ---------------------------
@@ -651,41 +673,20 @@ class UserDataManager:
                 ))
             return domain_alerts
         
-    async def has_notification_been_sent(self, user_id_ext: str, alert_id: str) -> bool:
-        """
-        Verifica si existe un log en DBNotificationLog para este usuario y alerta.
-        """
-        async with async_session_factory() as session:
-            # Como user_id_ext puede ser un telegram_id o installation_id, primero resolvemos el ID interno
-            # Truco: Probamos resolver como System o unknown, o iteramos sources. 
-            # Para simplificar, buscamos el user primero por cualquiera de los medios.
-            
-            # Buscamos el ID interno del usuario
-            # (Puedes optimizar esto si pasas el internal_id desde el servicio, 
-            #  pero user_id_ext es lo que tenemos en el objeto User del dominio)
-            
-            # Intento 1: Es numérico (Telegram o ID interno viejo)
-            stmt_user = select(DBUser.id).where(
-                (DBUser.telegram_id == str(user_id_ext)) | 
-                (DBUser.id == int(user_id_ext) if user_id_ext.isdigit() else False)
-            )
-            res = await session.execute(stmt_user)
-            internal_id = res.scalars().first()
-            
-            if not internal_id:
-                stmt_dev = select(DBUserDevice.user_id).where(DBUserDevice.installation_id == str(user_id_ext))
-                res = await session.execute(stmt_dev)
-                internal_id = res.scalars().first()
-            
-            if not internal_id: return False
+    async def has_notification_been_sent(self, user_id_db: str, alert_id: str) -> bool:
+        if not user_id_db.isdigit():
+            return False
 
+        async with async_session_factory() as session:
             stmt_log = select(DBNotificationLog).where(
                 and_(
-                    DBNotificationLog.user_id == internal_id,
+                    DBNotificationLog.user_id == int(user_id_db),
                     DBNotificationLog.alert_id == str(alert_id)
                 )
             )
+            
             result = await session.execute(stmt_log)
+            
             return result.scalar_one_or_none() is not None
 
     async def log_notification_sent(self, user_id: str, alert_id: str):
@@ -721,11 +722,7 @@ class UserDataManager:
     # ---------------------------
     # HELPERS
     # ---------------------------
-    def _to_domain_user(self, db_user: DBUser, fcm_token: str = "") -> User:
-        """
-        Convierte DBUser (SQLAlchemy) a User (Pydantic).
-        Calcula el 'auth_provider' basado en los datos disponibles.
-        """
+    def _to_domain_user(self, db_user: DBUser, fcm_token: str = "", db_settings: DBUserSettings | None = None) -> User:
         auth_provider = "device"
         if db_user.source == UserSource.TELEGRAM:
             auth_provider = "telegram"
@@ -733,6 +730,17 @@ class UserDataManager:
             auth_provider = "google"
             
         user_id_str = db_user.telegram_id if db_user.telegram_id else str(db_user.id)
+
+        settings_dto = None
+        if db_settings:
+            settings_dto = UserSettingsResponse(
+                general_notifications_enabled=db_settings.general_notifications_enabled,
+                language=db_settings.language, 
+                theme_mode=db_settings.theme_mode,
+                card_alerts_enabled=db_settings.card_alerts_enabled,
+                card_alert_hour=db_settings.card_alert_hour,
+                card_alert_days_before=db_settings.card_alert_days_before
+            )
 
         return User(
             user_id=user_id_str,
@@ -743,7 +751,9 @@ class UserDataManager:
             firebase_uid=db_user.firebase_uid,
             photo_url=db_user.photo_url,
             auth_provider=auth_provider,
-            fcm_token=fcm_token
+            fcm_token=fcm_token,
+            
+            settings=settings_dto 
         )
 
     def _to_domain_favorite(self, f: DBFavorite, user_id_ext: str) -> FavoriteResponse:

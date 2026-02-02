@@ -56,10 +56,12 @@ class LineRoute:
 
     def __post_init__(self):
         emoji = ""
-        
+
         if self.line_type == TransportType.BUS:
-            emoji, self.color = self._get_bus_style()
-            
+            emoji, line_color = self._get_bus_style()
+            if self.color is None:
+                self.color = line_color
+
         else:
             lookup_dict = STATIC_EMOJI_MAP.get(self.line_type, {})
             emoji = lookup_dict.get(self.line_name, "")

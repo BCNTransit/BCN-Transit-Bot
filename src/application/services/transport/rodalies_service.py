@@ -40,8 +40,8 @@ class RodaliesService(ServiceBase):
     async def sync_lines(self):
         await super().sync_lines(TransportType.RODALIES)
 
-    async def sync_stations(self):
-        await super().sync_stations(TransportType.RODALIES)
+    async def sync_stations(self, valid_lines_filter):
+        await super().sync_stations(TransportType.RODALIES, valid_lines_filter)
 
     async def fetch_lines(self) -> List[Line]:
         return await self.rodalies_api_service.get_lines()

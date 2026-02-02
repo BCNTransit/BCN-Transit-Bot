@@ -206,7 +206,7 @@ class DBUserSettings(Base):
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True, index=True)
     
     language = Column(String, default="es", nullable=False)
-    theme_mode = Column(String, default="system")
+    theme_mode = Column(String, default="SYSTEM")
     
     general_notifications_enabled = Column(Boolean, default=True, nullable=False) 
     

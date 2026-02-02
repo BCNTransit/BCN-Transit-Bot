@@ -61,7 +61,7 @@ class ServiceBase:
         final_lines.sort(key=Utils.sort_lines)
         
         elapsed = time.perf_counter() - start
-        print(f"[{self.__class__.__name__}] get_all_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
+        logger.info(f"[{self.__class__.__name__}] get_all_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
         return final_lines
 
     async def get_stations_by_line_code(self, transport_type: TransportType, line_code: str) -> List[Station]:
@@ -114,7 +114,7 @@ class ServiceBase:
 
     async def sync_lines(self, transport_type: TransportType):
         raw_lines = await self.fetch_lines()
-        print(f"⏳ {len(raw_lines)} {transport_type.value} lines to be sync in DB.")
+        logger.info(f"⏳ {len(raw_lines)} {transport_type.value} lines to be sync in DB.")
 
         VALID_COLS = {
             'id', 'original_id', 'code', 'name', 'description',
@@ -149,9 +149,21 @@ class ServiceBase:
 
         await self._sync_batch(raw_lines, transform_line, self.line_repository, f"{transport_type.value} lines")
 
-    async def sync_stations(self, transport_type: TransportType):
+    async def sync_stations(self, transport_type: TransportType, valid_lines_filter: set = None):
         raw_stations = await self.fetch_stations()
-        print(f"⏳ {len(raw_stations)} {transport_type.value} stations found. Starting sync...")
+        logger.info(f"⏳ {len(raw_stations)} {transport_type.value} stations found. Starting sync...")
+
+        if valid_lines_filter:
+            original_count = len(raw_stations)
+            
+            raw_stations = [
+                s for s in raw_stations 
+                if f"{transport_type.value}-{s.line_code}" in valid_lines_filter
+            ]
+            
+            diff = original_count - len(raw_stations)
+            if diff > 0:
+                logger.warning(f"🧹 {transport_type.value}: Se descartaron {diff} estaciones huérfanas (línea no encontrada).")
 
         VALID_COLS = {
             'id', 'original_id', 'code', 'name', 'description',
@@ -161,6 +173,8 @@ class ServiceBase:
 
         async def transform_station(raw: Station) -> DBStation:
             db_id = f"{transport_type.value}-{raw.line_code}-{raw.id}"
+            line_db_id = f"{transport_type.value}-{raw.line_code}"
+            
             extra = self._extract_extra_data(raw, VALID_COLS)
             
             return DBStation(
@@ -173,7 +187,7 @@ class ServiceBase:
                 longitude=raw.longitude,
                 transport_type=transport_type.value,
                 order=raw.order,
-                line_id=f"{transport_type.value}-{raw.line_code}",
+                line_id=line_db_id,
                 connections_data=None, 
                 extra_data=extra
             )
@@ -197,20 +211,20 @@ class ServiceBase:
             if len(current_batch) >= batch_size:
                 await self._safe_upsert(repository, current_batch, label)
                 count += len(current_batch)
-                print(f"   ↳ Guardadas {count}/{total} {label}...")
+                logger.info(f"   ↳ Guardadas {count}/{total} {label}...")
                 current_batch = []
 
         if current_batch:
             await self._safe_upsert(repository, current_batch, label)
             count += len(current_batch)
 
-        print(f"✅ Sync finalizada: {count} {label} en DB.")
+        logger.info(f"✅ Sync finalizada: {count} {label} en DB.")
 
     async def _safe_upsert(self, repository, batch, label):
         try:
             await repository.upsert_many(batch)
         except Exception as e:
-            print(f"❌ Error guardando lote de {label}: {e}")
+            logger.error(f"❌ Error guardando lote de {label}: {e}")
 
     def _extract_extra_data(self, obj: Any, valid_columns: Set[str]) -> Dict:
         return {

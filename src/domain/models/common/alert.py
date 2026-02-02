@@ -37,37 +37,49 @@ class Alert:
     affected_entities: List[AffectedEntity]
 
     def _get_alert_content(self):
-        title = self.publications[0].headerEs if self.publications and self.publications[0].headerEs else ""
-        description = self.publications[0].textEs if self.publications and self.publications[0].textEs else "Sin descripción"
-        description = html.escape(description)
+        # 1. Título y Descripción
+        title = self.publications[0].headerEs if self.publications and self.publications[0].headerEs else "Incidencia"
+        description = html.unescape(self.publications[0].textEs) if self.publications and self.publications[0].textEs else ""
 
-        begin_str = self.begin_date.strftime("%d/%m/%Y %H:%M")
-        end_str = self.end_date.strftime("%d/%m/%Y %H:%M")
+        # 2. Lógica de Líneas (Colapso inteligente)
+        lineas = sorted({e.line_code for e in self.affected_entities if e.line_code})
+        if not lineas:
+            lineas_summary = "Aviso"
+        elif len(lineas) > 3:
+            lineas_summary = f"Global +{len(lineas)}" 
+        else:
+            lineas_summary = ", ".join(lineas)
 
+        # 3. Lógica de Estaciones (NUEVO)
         estaciones = sorted({e.station_name for e in self.affected_entities if e.station_name})
-        estaciones_str = ", ".join(estaciones) if estaciones else "Varias estaciones"
-
-        lineas = sorted({e.line_name for e in self.affected_entities if e.line_name})
-        lineas_str = ", ".join(lineas) if lineas else "Varias líneas"
+        estaciones_summary = ""
         
-        status_emojis = {"ACTIVE": "🚨", "INACTIVE": "✅", "RESOLVED": "✅", "PLANNED": "📅"}
-        status_emoji = status_emojis.get(self.status.upper(), "ℹ️")
+        if len(estaciones) == 1:
+            # Si solo hay una, la mostramos: "L1 [Catalunya]"
+            estaciones_summary = f" [{estaciones[0]}]"
+        elif len(estaciones) > 1:
+            # Si hay varias, indicamos cuántas para no saturar
+            estaciones_summary = f" ({len(estaciones)} estaciones)"
+        # Si no hay estaciones (alerta de línea), se queda vacío
 
+        # 4. Mapeo de Causas
         cause_map = {
-            "TECHNICAL": "⚙️ Problemas técnicos", "ACCIDENT": "🚑 Accidente",
-            "WORKS": "🚧 Obras", "EVENT": "🎉 Evento", "OTHER": "ℹ️ Otros"
+            "TECHNICAL": "⚙️", "ACCIDENT": "🚑", "WORKS": "🚧", 
+            "EVENT": "🎉", "STRIKE": "📢", "OTHER": "ℹ️"
         }
-        cause_str = cause_map.get(self.cause.upper(), self.cause)
+        emoji = cause_map.get(self.cause.upper() if self.cause else '', "🚨")
 
-        return title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description
+        # 5. CONSTRUCCIÓN DEL PUSH_BODY
+        # Formato: 🚨 [L1] [Catalunya] Título...
+        # O: 🚨 [L5] (4 estaciones) Título...
+        push_body = f"{emoji} [{lineas_summary}]{estaciones_summary} {title}".strip()
 
-    def format_app_alert(self):
-        title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()
-        return (
-            f"🚇 Líneas: {lineas_str}\n"
-            f"📍 Estaciones: {estaciones_str}\n\n"
-            f"📝 Info:\n{description}"
-        )
+        # Recorte final de seguridad
+        if len(push_body) > 120:
+            push_body = push_body[:117] + "..."
+
+        return title, lineas_summary, estaciones_summary, description, push_body
+    
 
     def format_html_alert(self):
         title, begin_str, end_str, lineas_str, estaciones_str, cause_str, description = self._get_alert_content()

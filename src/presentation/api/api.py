@@ -33,12 +33,13 @@ from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
 
 from src.infrastructure.database.database import async_session_factory
+from src.core.logger import logger
 
 
 
 class RegisterDeviceRequest(BaseModel):
     installation_id: str
-    fcm_token: str = ""
+    fcm_token: str | None = None
     username: str = ""
 
     
@@ -46,6 +47,9 @@ class GoogleLoginRequest(BaseModel):
     user_id: str
     id_token: str
     fcm_token: str
+
+class LogoutRequest(BaseModel):
+    installation_id: str = Field(..., description="El UUID del dispositivo que cierra sesión")
 
 class UpdateFavoriteAliasRequest(BaseModel):
     alias: Optional[str] = Field(None, max_length=50, description="El nuevo nombre personalizado para la estación")
@@ -299,6 +303,7 @@ def get_user_router(
         request: GoogleLoginRequest,
     ):
         try:
+            # 1. Verificar Token
             decoded_token = auth.verify_id_token(request.id_token)
             email = decoded_token.get('email')
             uid = decoded_token.get('uid')
@@ -310,36 +315,76 @@ def get_user_router(
 
             user_repo = UserRepository(async_session_factory)
 
-            user = await user_repo.get_by_email(email)
-            if user:
-                if user.username != name: 
-                    user.username = name
-                if user.photo_url != photo_url:
-                    user.photo_url = photo_url
+            # 2. Buscamos a los dos posibles usuarios
+            existing_google_user = await user_repo.get_by_email(email)
+            current_anon_user = await user_repo.get_user_by_installation_id(request.user_id)
 
-                device_exists = any(d.installation_id == request.user_id for d in user.devices)
-
-                if not device_exists:
-                    new_device = UserDevice(
-                        installation_id=request.user_id,
-                        fcm_token=request.fcm_token
-                    )
-                    await user_repo.add_device_to_user(user.id, new_device)
-
-                return {"status": "success", "user_id": user.id}
-            
-            user_to_migrate = await user_repo.get_user_by_installation_id(request.user_id)
-            if user_to_migrate:                
-                user_to_migrate.email = email
-                user_to_migrate.firebase_uid = uid
-                user_to_migrate.photo_url = photo_url
-                user_to_migrate.username = name
-                user_to_migrate.source = UserSource.ANDROID
+            # --- ESCENARIO 1: MERGE (Fusión) ---
+            # Caso: Usuario tenía cuenta antigua Y estaba usando la app como anónimo con datos nuevos.
+            if existing_google_user and current_anon_user and existing_google_user.id != current_anon_user.id:
                 
-                await user_repo.update(user_to_migrate)
+                # Repositorio: Mueve devices/favoritos y BORRA al anónimo.
+                await user_repo.merge_users(
+                    source_user_id=current_anon_user.id, 
+                    target_user_id=existing_google_user.id
+                )
                 
-                return {"status": "merged", "message": "Cuenta recuperada y vinculada"}
+                # Actualizamos perfil
+                existing_google_user.username = name
+                existing_google_user.photo_url = photo_url
+                existing_google_user.firebase_uid = uid
+                
+                # Aseguramos que el token FCM esté actualizado tras el merge
+                await user_repo.ensure_device_linked(
+                    user_id=existing_google_user.id,
+                    installation_id=request.user_id,
+                    fcm_token=request.fcm_token
+                )
+                
+                await user_repo.update(existing_google_user)
+                return {"status": "merged", "user_id": str(existing_google_user.id), "message": "Accounts merged"}
+
+            # --- ESCENARIO 2: LOGIN NORMAL ---
+            # Caso: Usuario se loguea en un dispositivo limpio o que ya era suyo.
+            if existing_google_user:
+                # Actualizamos datos básicos
+                if existing_google_user.username != name: existing_google_user.username = name
+                if existing_google_user.photo_url != photo_url: existing_google_user.photo_url = photo_url
+                if existing_google_user.firebase_uid != uid: existing_google_user.firebase_uid = uid
+
+                # CRÍTICO: Aquí entra el "Ghost Buster" y "Token Stealing" si lo implementaste en ensure_device_linked
+                # Si este dispositivo era de un anónimo, se lo robamos y borramos al anónimo.
+                await user_repo.ensure_device_linked(
+                    user_id=existing_google_user.id,
+                    installation_id=request.user_id,
+                    fcm_token=request.fcm_token
+                )
+                
+                await user_repo.update(existing_google_user)
+                return {"status": "success", "user_id": str(existing_google_user.id), "message": "Google account linked"}
             
+            # --- ESCENARIO 3: PROMOCIÓN (Anonymous -> Google) ---
+            # Caso: Usuario nuevo en el sistema, convertimos su usuario local en oficial.
+            if current_anon_user:                
+                current_anon_user.email = email
+                current_anon_user.firebase_uid = uid
+                current_anon_user.photo_url = photo_url
+                current_anon_user.username = name
+                current_anon_user.source = UserSource.ANDROID
+                
+                # MEJORA: Aseguramos que se guarde el FCM Token si ha cambiado
+                await user_repo.ensure_device_linked(
+                    user_id=current_anon_user.id,
+                    installation_id=request.user_id,
+                    fcm_token=request.fcm_token
+                )
+                
+                await user_repo.update(current_anon_user)
+                return {"status": "promoted", "user_id": str(current_anon_user.id), "message": "Anonymous account promoted"}
+            
+            # --- ESCENARIO 4: REGISTRO LIMPIO ---
+            # Caso: Login directo sin usuario previo (Web o App reinstalada sin UUID previo).
+            # Repositorio: create_with_device ya incluye la limpieza de tokens duplicados.
             new_user = DBUser(
                 email=email,
                 firebase_uid=uid,
@@ -353,15 +398,37 @@ def get_user_router(
                 fcm_token=request.fcm_token
             )
 
-            await user_repo.create_with_device(new_user, new_device)
-            
-            return {"status": "created"}
+            created_user = await user_repo.create_with_device(new_user, new_device)
+            return {"status": "created", "user_id": str(created_user.id)}
 
         except auth.InvalidIdTokenError as e:
             raise HTTPException(status_code=401, detail=f"Token inválido: {e}")
         except Exception as e:
-            print(f"Error en login: {e}") 
+            logger.error(f"Error en login: {e}") 
             raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+    @router.post("/auth/logout", status_code=status.HTTP_200_OK)
+    async def logout(
+        request: LogoutRequest,
+        uid: DBUser = Depends(get_current_user_uid)
+    ):
+        user_repo = UserRepository(async_session_factory)
+        
+        deleted = await user_repo.remove_device(
+            user_id=uid, 
+            installation_id=request.installation_id
+        )
+
+        if not deleted:
+            raise HTTPException(
+                status_code=404, 
+                detail="Device not found or not belonging to the user."
+            )
+
+        return {
+            "status": "success",
+            "message": "Logged out successfully. Device unlinked."
+        }
 
     @router.patch("/settings", response_model=bool)
     async def update_settings(
