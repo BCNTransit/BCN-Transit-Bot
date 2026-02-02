@@ -41,8 +41,8 @@ class FgcService(ServiceBase):
     async def sync_lines(self):
         await super().sync_lines(TransportType.FGC)
 
-    async def sync_stations(self):
-        await super().sync_stations(TransportType.FGC)
+    async def sync_stations(self, valid_lines_filter):
+        await super().sync_stations(TransportType.FGC, valid_lines_filter)
 
     async def fetch_lines(self) -> List[Line]:
         return await self.fgc_api_service.get_all_lines()

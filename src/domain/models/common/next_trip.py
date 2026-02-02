@@ -7,8 +7,10 @@ SPAIN_TZ = ZoneInfo("Europe/Madrid")
 @dataclass
 class NextTrip:
     id: str
-    arrival_time: int # Epoch in seconds
+    arrival_time: int
     delay_in_minutes: int = 0
+    is_real_time: bool = False
+    delay_seconds: int = 0
     platform: str = ""
 
     def remaining_time(self, arriving_threshold=40) -> str:

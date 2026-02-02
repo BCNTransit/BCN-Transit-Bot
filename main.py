@@ -60,6 +60,8 @@ from src.infrastructure.external.firebase_client import initialize_firebase as i
 from src.infrastructure.database.seeders.lines_seeder import seed_lines, seed_stations
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 
 class BotApp:
@@ -273,12 +275,65 @@ class BotApp:
 
         logger.info("Handlers registered successfully")
 
+    async def run_daily_cycle(self):
+        """
+        Método compuesto para el CRON:
+        1. Descarga el GTFS y actualiza la RAM (AmbGtfsStore).
+        2. Ejecuta el Seeder para actualizar la BD con esos datos nuevos.
+        """
+        logger.info("🔄 [CRON] Iniciando ciclo de actualización diario...")
+        
+        try:
+            logger.info("📥 [CRON] 1/2 Solicitando actualización GTFS...")
+            
+            if not AmbGtfsStore.is_loading:
+                asyncio.create_task(asyncio.to_thread(AmbGtfsStore.load_data))
+                
+            logger.info("⏳ [CRON] Esperando a que finalice el procesamiento GTFS...")
+            await AmbGtfsStore.loading_event.wait()
+
+            if not AmbGtfsStore.is_loaded:
+                logger.error("❌ [CRON] La actualización GTFS falló. Abortando Seeder.")
+                return
+
+            logger.info("🌱 [CRON] 2/2 Ejecutando Seeder en Base de Datos...")
+            await self.run_seeder_job()
+            
+            logger.info("✅ [CRON] Ciclo diario completado.")
+            
+        except Exception as e:
+            logger.error(f"❌ [CRON] Error en el ciclo diario: {e}")
+
+    async def run_realtime_updater(self):
+        try:
+            await asyncio.to_thread(AmbGtfsStore.update_realtime_feed)
+        except Exception as e:
+            logger.error(f"❌ [CRON RT] Error actualizando tiempo real: {e}")
+
     async def run(self):
         """Main async entrypoint for the bot."""
         await init_db()
         initialize_firebase_app()
 
-        self.scheduler.add_job(self.run_seeder_job, 'cron', hour=4, minute=0)
+        logger.info("⏳ Inicializando datos AMB en memoria...")
+        await AmbApiService.initialize()
+        await self.run_realtime_updater()
+
+        self.scheduler.add_job(
+            self.run_daily_cycle, 
+            trigger=CronTrigger(hour=4, minute=0),
+            id='daily_static_sync',
+            replace_existing=True
+        )
+
+        self.scheduler.add_job(
+            self.run_realtime_updater,
+            trigger=IntervalTrigger(seconds=30),
+            id='realtime_bus_sync',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
         self.scheduler.start()
 
         self.application = ApplicationBuilder().token(self.telegram_token).build()
