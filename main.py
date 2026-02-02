@@ -336,6 +336,9 @@ class BotApp:
         )
         self.scheduler.start()
 
+        logger.info("🚀 Forzando sincronización inicial de datos (Seeder)...")
+        asyncio.create_task(self.run_seeder())
+
         self.application = ApplicationBuilder().token(self.telegram_token).build()
         self.register_handlers()
 
