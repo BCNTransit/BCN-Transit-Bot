@@ -1,8 +1,10 @@
-from sqlalchemy import text
+from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from src.infrastructure.database.base import Base
 from src.application.services.secrets_manager import SecretsManager
+
+from src.core.logger import logger
 
 secrets = SecretsManager()
 
@@ -20,6 +22,7 @@ elif DATABASE_URL.startswith("postgres://"):
 
 engine = create_async_engine(
     DATABASE_URL,
+    poolclass=NullPool,
     echo=False,
     pool_pre_ping=True
 )
@@ -41,23 +44,23 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         import src.domain.schemas.models
-        print("🔄 Creando tablas en la base de datos...")
+        logger.info("🔄 Creando tablas en la base de datos...")
         await conn.run_sync(Base.metadata.create_all)
-        print("[Database] Tablas inicializadas correctamente.")
+        logger.info("[Database] Tablas inicializadas correctamente.")
 
 async def reset_transport_data():
     """
     Limpia las tablas de líneas y estaciones para asegurar una carga limpia.
     Usa TRUNCATE CASCADE para borrar datos y reiniciar IDs.
     """
-    print("🧹 Limpiando base de datos (Lines & Stations)...")
+    logger.info("🧹 Limpiando base de datos (Lines & Stations)...")
     
     async with async_session_factory() as session:
         try:
             await session.execute(text("TRUNCATE TABLE stations, lines RESTART IDENTITY CASCADE;"))
             
             await session.commit()
-            print("✨ Tablas limpias.")
+            logger.info("✨ Tablas limpias.")
         except Exception as e:
-            print(f"❌ Error limpiando tablas: {e}")
+            logger.error(f"❌ Error limpiando tablas: {e}")
             await session.rollback()

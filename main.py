@@ -1,6 +1,8 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
 
+from fastapi import FastAPI
 import uvicorn
 from telegram import Bot
 from telegram.ext import (
@@ -8,6 +10,7 @@ from telegram.ext import (
     MessageHandler, filters
 )
 
+from src.infrastructure.external.api.amb_api_service import AmbApiService, AmbGtfsStore
 from src.application.services.connections_generator import ConnectionsGenerator
 from src.core.logger import logger
 
@@ -274,6 +277,7 @@ class BotApp:
         """Main async entrypoint for the bot."""
         await init_db()
         initialize_firebase_app()
+
         self.scheduler.add_job(self.run_seeder_job, 'cron', hour=4, minute=0)
         self.scheduler.start()
 
@@ -335,13 +339,43 @@ async def start_bot_and_api():
         rodalies_service=bot.rodalies_service,
         bicing_service=bot.bicing_service,
         fgc_service=bot.fgc_service,
-        user_data_manager=bot.user_data_manager
+        user_data_manager=bot.user_data_manager,
+        lifespan=lifespan
     )
 
     await asyncio.gather(
         bot.run(),
         start_fastapi(app)
     )
+
+# ONLY FOR TESTING
+def get_fastapi_app():
+    bot = BotApp()
+    bot.init_services()
+    
+    return create_app(
+        metro_service=bot.metro_service,
+        bus_service=bot.bus_service,
+        tram_service=bot.tram_service,
+        rodalies_service=bot.rodalies_service,
+        bicing_service=bot.bicing_service,
+        fgc_service=bot.fgc_service,
+        user_data_manager=bot.user_data_manager
+    )
+
+async def daily_gtfs_updater():
+    while True:
+        await asyncio.sleep(86400) 
+        logger.info("🔄 Ejecutando tarea programada de actualización GTFS...")
+        await asyncio.to_thread(AmbGtfsStore.load_data)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 Iniciando carga inicial de GTFS (esto puede tardar unos segundos)...")
+    await AmbApiService.initialize()    
+    task = asyncio.create_task(daily_gtfs_updater())    
+    yield    
+    task.cancel()
 
 if __name__ == "__main__":
     asyncio.run(start_bot_and_api())

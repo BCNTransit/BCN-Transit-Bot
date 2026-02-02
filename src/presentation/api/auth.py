@@ -5,13 +5,15 @@ from fastapi.security import APIKeyHeader, HTTPBearer
 from src.application.services.user_data_manager import UserDataManager
 from firebase_admin import auth
 
+from src.core.logger import logger
+
 security = HTTPBearer()
 
 try:
-    SERVER_API_KEY = "2ca27e01-7cd6-4e4e-b234-f19827ebfaa5"
+    SERVER_API_KEY = os.environ["BCN_TRANSIT_API_KEY"]
 except KeyError:
-    print("❌ CRITICAL ERROR: Environment variable 'BCN_TRANSIT_API_KEY' was not found.")
-    print("   The server cannot start without security.")
+    logger.error("❌ CRITICAL ERROR: Environment variable 'BCN_TRANSIT_API_KEY' was not found.")
+    logger.error("   The server cannot start without security.")
     sys.exit(1)
 
 API_KEY_NAME = "X-API-Key"
@@ -37,7 +39,7 @@ async def get_current_user_uid(
                 return user_id
                 
         except Exception as e:
-            print(f"Token inválido: {e}")
+            logger.warning(f"Invalid Token: {e}")
             pass
 
     if x_user_id:

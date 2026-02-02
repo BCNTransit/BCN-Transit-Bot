@@ -80,7 +80,7 @@ class BusService(ServiceBase):
         # Recuperamos la lista limpia
         raw_stations_clean = list(unique_stations_map.values())
 
-        print(f"🧹 Limpieza: {len(raw_stations_dirty)} -> {len(raw_stations_clean)} estaciones únicas.")
+        logger.info(f"🧹 Limpieza: {len(raw_stations_dirty)} -> {len(raw_stations_clean)} estaciones únicas.")
         return raw_stations_clean
     
     async def fetch_stations_by_line(self, line_id: str) -> List[Station]:
@@ -151,6 +151,9 @@ class BusService(ServiceBase):
             api_call=lambda: self.tmb_api_service.get_next_bus_at_stop(stop_code),
             cache_ttl=15
         )
+
+        if len(data) == 0:
+            return await AmbApiService.get_next_arrivals(stop_code)
         
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stop_routes({stop_code}) -> iBus Data ({elapsed:.4f} s)")
@@ -164,17 +167,11 @@ class BusService(ServiceBase):
         duplicates_count = 0
 
         for station in stations:
-            # 🔑 LA CLAVE MÁGICA
-            # Define aquí qué hace que una estación sea "única" en tu DB.
-            # Generalmente es: ID de parada + Línea + Sentido
             
-            # Normalizamos a string para evitar errores de "1" vs 1
             s_id = str(station.id).strip()
             l_code = str(station.line_code).strip().upper()
-            # OJO: Si direction viene como None, usaremos "" para que no falle el hash
             direction = str(station.direction).strip() if station.direction else ""
             
-            # Tupla inmutable que representa la identidad de la fila
             unique_key = (s_id, l_code, direction)
 
             if unique_key not in seen_keys:
@@ -182,8 +179,7 @@ class BusService(ServiceBase):
                 unique_list.append(station)
             else:
                 duplicates_count += 1
-                # Opcional: Imprimir para debug
-                # print(f"⚠️ Duplicado ignorado: {unique_key}")
+                logger.warning(f"⚠️ Duplicado ignorado: {unique_key}")
 
-        print(f"🧹 Limpieza completada: Se eliminaron {duplicates_count} estaciones duplicadas.")
+        logger.info(f"🧹 Limpieza completada: Se eliminaron {duplicates_count} estaciones duplicadas.")
         return unique_list

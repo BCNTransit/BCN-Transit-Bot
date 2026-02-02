@@ -33,6 +33,7 @@ from src.domain.models.common.line import Line
 from src.domain.models.common.location import Location
 
 from src.infrastructure.database.database import async_session_factory
+from src.core.logger import logger
 
 
 
@@ -403,7 +404,7 @@ def get_user_router(
         except auth.InvalidIdTokenError as e:
             raise HTTPException(status_code=401, detail=f"Token inválido: {e}")
         except Exception as e:
-            print(f"Error en login: {e}") 
+            logger.error(f"Error en login: {e}") 
             raise HTTPException(status_code=500, detail="Error interno del servidor")
 
     @router.post("/auth/logout", status_code=status.HTTP_200_OK)

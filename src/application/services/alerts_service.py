@@ -6,10 +6,8 @@ import html
 import os
 
 from telegram import Bot
-from telegram.error import TelegramError
 from firebase_admin import messaging
 
-from src.domain.enums.clients import ClientType
 from src.domain.models.common.alert import Alert
 from src.domain.models.common.user import User
 from src.domain.schemas.favorite import FavoriteResponse

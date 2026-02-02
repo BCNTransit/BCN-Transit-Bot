@@ -13,15 +13,17 @@ from src.application.services.transport.tram_service import TramService
 from src.application.services.transport.rodalies_service import RodaliesService
 from src.application.services.transport.fgc_service import FgcService
 
+from src.core.logger import logger
+
 async def seed_lines(metro_service: MetroService, bus_service: BusService, tram_service: TramService,
                      rodalies_service: RodaliesService, fgc_service: FgcService):
-    print("🚀 Iniciando Seeder de Líneas...")
+    logger.info("🚀 Iniciando Seeder de Líneas...")
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     try:
-        print("📥 Sincronizando todos los servicios...")
+        logger.info("📥 Sincronizando todos los servicios...")
         
         await asyncio.gather(
             metro_service.sync_lines(),
@@ -32,20 +34,20 @@ async def seed_lines(metro_service: MetroService, bus_service: BusService, tram_
             return_exceptions=False
         )
         
-        print("✨ Lines Seeder completado con éxito.")
+        logger.info("✨ Lines Seeder completado con éxito.")
 
     except Exception as e:
-        print(f"❌ Error crítico en el Seeder: {e}")
+        logger.error(f"❌ Error crítico en el Seeder: {e}")
 
 async def seed_stations(metro_service: MetroService, bus_service: BusService, tram_service: TramService,
                      rodalies_service: RodaliesService, fgc_service: FgcService):
-    print("🚀 Iniciando Seeder de Estaciones...")
+    logger.info("🚀 Iniciando Seeder de Estaciones...")
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     try:
-        print("📥 Sincronizando todos los servicios...")
+        logger.info("📥 Sincronizando todos los servicios...")
         
         await asyncio.gather(
             metro_service.sync_stations(),
@@ -56,10 +58,10 @@ async def seed_stations(metro_service: MetroService, bus_service: BusService, tr
             return_exceptions=False
         )
         
-        print("✨ Stations Seeder completado con éxito.")
+        logger.info("✨ Stations Seeder completado con éxito.")
 
     except Exception as e:
-        print(f"❌ Error crítico en el Seeder: {e}")
+        logger.error(f"❌ Error crítico en el Seeder: {e}")
 
 if __name__ == "__main__":
     if sys.platform == 'win32':
