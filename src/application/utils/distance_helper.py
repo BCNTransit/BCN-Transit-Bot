@@ -47,6 +47,8 @@ class DistanceHelper:
     ) -> List[Dict]:
         start = time.perf_counter()
         stops = []
+        
+        seen_stations = set() 
 
         if user_location and results_to_return == 50:
             results_to_return = 10
@@ -59,23 +61,22 @@ class DistanceHelper:
             min_lat = max_lat = min_lon = max_lon = None
 
         def within_bbox(lat, lon):
-            if user_location is None:
-                return True
-            
-            if lat is None or lon is None:
-                return False
-
+            if user_location is None: return True
+            if lat is None or lon is None: return False
             try:
-                lat_float = float(lat)
-                lon_float = float(lon)
-                
-                return min_lat <= lat_float <= max_lat and min_lon <= lon_float <= max_lon
+                return min_lat <= float(lat) <= max_lat and min_lon <= float(lon) <= max_lon
             except ValueError:
                 return False
             
         for s in stations:
             if not within_bbox(s.latitude, s.longitude):
                 continue
+            unique_key = (s.transport_type.value, s.code)
+            
+            if unique_key in seen_stations:
+                continue
+            
+            seen_stations.add(unique_key)
 
             distance_km = DistanceHelper.haversine_distance(
                 s.latitude, s.longitude, user_location.latitude, user_location.longitude
@@ -98,11 +99,14 @@ class DistanceHelper:
         for b in bicing_stations:
             if not within_bbox(b.latitude, b.longitude):
                 continue
+            
             distance_km = DistanceHelper.haversine_distance(
                 b.latitude, b.longitude, user_location.latitude, user_location.longitude
             ) if user_location else None
+            
             if distance_km is not None and distance_km > max_distance_km:
                 continue
+                
             stops.append({
                 "type": "bicing",
                 "line_name": '',
