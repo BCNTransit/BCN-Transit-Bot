@@ -335,21 +335,28 @@ class AmbApiService:
     def _get_next_arrivals_sync(stop_code: str, max_results: int = 3) -> List[LineRoute]:
         """
         Calcula horarios planificados Y aplica los retrasos en tiempo real (GTFS-RT).
-        Devuelve timestamp exacto.
+        Filtra buses que ya han pasado basándose en su tiempo real.
         """
         data = AmbGtfsStore.data
         if not data:
             logger.warning("⚠️ Datos GTFS no cargados. Llama a initialize() primero.")
             return []
 
+        # 1. Configuración de Tiempos
         tz = pytz.timezone('Europe/Madrid')
         now = datetime.now(tz)
+        
+        # Timestamp exacto de ahora (para filtrar lo que ya pasó)
+        current_timestamp = now.timestamp()
+        
+        # Timestamp de la medianoche de hoy (para calcular timestamps absolutos)
         today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         midnight_timestamp = today_midnight.timestamp()
 
+        # Segundos desde medianoche (para filtrar el DataFrame estático)
         current_seconds = now.hour * 3600 + now.minute * 60 + now.second
 
-        # Búsqueda de paradas
+        # 2. Buscar Parada (stop_code o stop_id)
         df_stops = data['stops']
         mask_stop = (df_stops['stop_code'] == stop_code) | (df_stops['stop_id'] == stop_code)
         target_stops = df_stops[mask_stop]
@@ -360,21 +367,26 @@ class AmbApiService:
         
         target_ids = target_stops['stop_id'].unique()
 
-        # Búsqueda de horarios
+        # 3. Filtrar Stop Times (Estático)
         df_st = data['stop_times']
-        window = 7200 # 2 horas
+        
+        # Ampliamos la ventana hacia atrás (-600s = 10 min) para capturar buses muy retrasados.
+        # Si un bus debía pasar a las 12:00 y son las 12:05, pero lleva 10 min de retraso,
+        # llegará a las 12:10. Necesitamos que el filtro estático lo incluya.
+        window_future = 7200 # 2 horas
+        window_past = 600    # 10 minutos atrás
         
         mask_times = (
             (df_st['stop_id'].isin(target_ids)) &
-            (df_st['arrival_seconds'] >= current_seconds - 300) & 
-            (df_st['arrival_seconds'] <= current_seconds + window)
+            (df_st['arrival_seconds'] >= current_seconds - window_past) & 
+            (df_st['arrival_seconds'] <= current_seconds + window_future)
         )
         candidates = df_st[mask_times].copy()
         
         if candidates.empty:
             return []
 
-        # Joins
+        # 4. Joins con Metadatos (Trips, Routes, Agency)
         df_trips_routes = data['trips_routes']
         df_full = pd.merge(candidates, df_trips_routes, on='trip_id', how='left')
         
@@ -384,41 +396,57 @@ class AmbApiService:
         else:
              df_full['agency_name'] = "AMB"
 
-        df_full.sort_values('arrival_seconds', inplace=True)
+        # NOTA: No ordenamos el DataFrame aquí porque el orden real depende del delay individual
         
         routes_list: List[LineRoute] = []
         
+        # Agrupación por Línea y Destino
         group_cols = ['route_id', 'trip_headsign', 'route_short_name', 'route_long_name', 'route_color', 'route_type', 'agency_name']
         
         for keys, group in df_full.groupby(group_cols, sort=False):
             r_id, headsign, r_short, r_long, r_color, r_type, agency = keys
             
-            next_trips_df = group.head(max_results)
+            valid_trips_objs = []
             
-            next_trips_objs = []
-            for _, trip in next_trips_df.iterrows():
+            # Iteramos sobre TODOS los candidatos de esta línea
+            for _, trip in group.iterrows():
                 trip_id = str(trip['trip_id'])
                 arr_sec_static = int(trip['arrival_seconds'])
                 
-                # --- TIEMPO REAL ---
-                # 1. Buscamos delay en memoria
+                # --- LÓGICA REAL TIME ---
+                # A. Obtener delay
                 delay = AmbGtfsStore.realtime_delays.get(trip_id, 0)
                 is_rt = trip_id in AmbGtfsStore.realtime_delays
                 
-                # 2. Timestamp Base (Estático)
+                # B. Calcular Timestamp Real
                 base_ts = int(midnight_timestamp + arr_sec_static)
-                
-                # 3. Timestamp Final (Con retraso aplicado)
                 final_ts = base_ts + delay
                 
-                next_trips_objs.append(NextTrip(
+                # C. FILTRO "YA PASÓ"
+                # Si la hora real de llegada es anterior a "ahora - 30s", lo descartamos.
+                # (Damos 30s de margen para no borrar el bus justo cuando está en la parada)
+                if final_ts < (current_timestamp - 30):
+                    continue
+                
+                valid_trips_objs.append(NextTrip(
                     id=trip_id,
                     arrival_time=final_ts,
                     is_real_time=is_rt,
                     delay_seconds=delay
                 ))
 
-            # Visuales
+            # Si no quedan viajes válidos futuros, saltamos esta línea
+            if not valid_trips_objs:
+                continue
+
+            # --- ORDENAR Y CORTAR ---
+            # 1. Ordenamos por tiempo REAL de llegada (no por el estático)
+            valid_trips_objs.sort(key=lambda x: x.arrival_time)
+            
+            # 2. Ahora sí, nos quedamos con los próximos N
+            final_trips = valid_trips_objs[:max_results]
+
+            # --- DATOS VISUALES ---
             r_short = str(r_short) if pd.notna(r_short) else ""
             r_long = str(r_long) if pd.notna(r_long) else ""
             display_name = r_short if r_short else r_long
@@ -443,13 +471,16 @@ class AmbApiService:
                 route_id=str(r_id),
                 line_id=str(r_id),
                 line_code=display_name,
-                line_name=display_name,
+                line_name=display_name, # A veces display_name es mejor que r_long
                 line_type=t_type_enum,
                 color=color_hex,
                 destination=headsign_str,
-                next_trips=next_trips_objs,
+                next_trips=final_trips,
                 name_with_emoji=f"{t_type_enum.value} {display_name}"
             ))
+
+        # (Opcional) Ordenar las líneas para que aparezca primero la que tiene el bus más próximo
+        routes_list.sort(key=lambda x: x.next_trips[0].arrival_time if x.next_trips else 9999999999)
 
         return routes_list
 
