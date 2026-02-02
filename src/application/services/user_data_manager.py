@@ -1,8 +1,8 @@
 import asyncio
 import inspect
 import logging
-from typing import List, Optional
-from datetime import datetime, timezone
+from typing import List, Optional, Tuple
+from datetime import date, datetime, time, timezone
 from functools import wraps
 
 # SQLAlchemy & DB
@@ -479,6 +479,61 @@ class UserDataManager:
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount > 0
+        
+    async def get_users_for_card_alerts(self, current_hour: int) -> List[Tuple[User, DBUserSettings]]:
+        async with async_session_factory() as session:
+            stmt = (
+                select(DBUser, DBUserSettings, DBUserDevice)
+                .join(DBUserSettings, DBUser.id == DBUserSettings.user_id)
+                .join(DBUserDevice, DBUser.id == DBUserDevice.user_id)
+                .where(
+                    and_(
+                        DBUserSettings.general_notifications_enabled == True,
+                        DBUserSettings.card_alerts_enabled == True,
+                        DBUserSettings.card_alert_hour == current_hour
+                    )
+                )
+            )
+            
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            users_data = []
+            for row in rows:
+                db_user = row.DBUser
+                db_settings = row.DBUserSettings
+                db_device = row.UserDevice
+                
+                domain_user = self._to_domain_user(
+                    db_user=db_user,
+                    fcm_token=db_device.fcm_token,
+                    db_settings=db_settings
+                )
+                
+                users_data.append((domain_user, db_settings))
+
+            return users_data
+    
+    async def get_user_cards_expiring_on(self, user_id: int, target_date: date) -> List[DBUserCard]:
+        """
+        Obtiene las tarjetas de un usuario que caducan en el día exacto especificado.
+        """
+        async with async_session_factory() as session:
+            start_of_day = datetime.combine(target_date, time.min)
+            end_of_day = datetime.combine(target_date, time.max)
+
+            stmt = (
+                select(DBUserCard)
+                .where(
+                    and_(
+                        DBUserCard.user_id == user_id,
+                        DBUserCard.expiration_date >= start_of_day,
+                        DBUserCard.expiration_date <= end_of_day
+                    )
+                )
+            )
+            result = await session.execute(stmt)
+            return result.scalars().all()
         
 
     # ---------------------------
