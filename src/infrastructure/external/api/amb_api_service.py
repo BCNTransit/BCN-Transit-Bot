@@ -541,7 +541,7 @@ class AmbApiService:
 
             routes_list.append(LineRoute(
                 route_id=str(r_id),
-                line_id=str(r_id),
+                line_id=display_name,
                 line_code=display_name,
                 line_name=display_name,
                 line_type=t_type_enum,
