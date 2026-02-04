@@ -209,7 +209,6 @@ def get_fgc_router(
     return router
 
 
-
 def get_results_router(
     metro_service: MetroService,
     bus_service: BusService,
@@ -223,25 +222,13 @@ def get_results_router(
 
     @router.get("/near")
     async def list_near_stations(lat: float, lon: float, radius: float = 0.5):
-        metro_task = metro_service.get_stations_by_name('')
-        bus_task = bus_service.get_stops_by_name('')
-        tram_task = tram_service.get_stations_by_name('')
-        fgc_task = fgc_service.get_stations_by_name('')
-        rodalies_task = rodalies_service.get_stations_by_name('')
-        bicing_task = bicing_service.get_stations_by_name('')
+        transport_task = metro_service.get_nearby_stations(lat, lon, radius)        
+        bicing_task = bicing_service.get_nearby_stations(lat, lon, radius)
 
-        metro, bus, tram, fgc, rodalies, bicing = await asyncio.gather(
-            metro_task, bus_task, tram_task, fgc_task, rodalies_task, bicing_task
+        transport, bicing = await asyncio.gather(
+            transport_task, bicing_task
         )
-
-        near_results = DistanceHelper.build_stops_list(
-            stations=metro + bus + tram + fgc + rodalies,
-            bicing_stations=bicing,
-            user_location=Location(latitude=lat, longitude=lon),
-            results_to_return=999999,
-            max_distance_km=radius
-        )
-        return near_results
+        return transport + bicing
 
     @router.get("/search")
     async def search_stations(name: str, uid: int = Depends(get_current_user_uid)):

@@ -131,20 +131,30 @@ class DBSearchHistory(Base):
 class DBLine(Base):
     __tablename__ = "lines"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True) # ej: "bus-175"
     original_id = Column(String, nullable=False, index=True)
-    code = Column(String, nullable=False)
+    code = Column(String, nullable=False) # "175", "L1"
     name = Column(String, nullable=False, index=True)
     description = Column(String, nullable=True)
     origin = Column(String, nullable=True)
     destination = Column(String, nullable=True)
     color = Column(String, nullable=False)
     transport_type = Column(String, nullable=False)
-    extra_data = Column(JSON, nullable=True) # JSON normal porque rara vez consultamos dentro
+    
+    extra_data = Column(JSON, nullable=True) 
 
     __table_args__ = (
         UniqueConstraint('original_id', 'transport_type', name='uq_original_id_transport'),
     )
+    stops = relationship(
+        "DBRouteStop", 
+        back_populates="line", 
+        order_by="DBRouteStop.order", 
+        cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return f"<DBLine(code={self.code}, name={self.name})>"
 
 # ----------------------------
 # STATIONS
@@ -215,3 +225,84 @@ class DBUserSettings(Base):
     card_alert_hour = Column(Integer, default=9)
 
     user = relationship("DBUser", back_populates="settings")
+
+class DBPhysicalStation(Base):
+    __tablename__ = "physical_stations"
+
+    # ID Normalizado (ej: "237"). Primary Key.
+    id = Column(String, primary_key=True, index=True) 
+    
+    # El código visual (ej: "000237"). Útil para mostrar al usuario.
+    code = Column(String, index=True, nullable=True)
+    
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True) # "Pl. Catalunya / Fontanella"
+    transport_type = Column(String, index=True, nullable=False)
+    
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    
+    # Municipio (Si lo tenías en extra_data, mejor sácalo a columna si filtras por ciudad)
+    municipality = Column(String, nullable=True)
+
+    # JSON con servicios extra (Wifi, Accesible, Pantalla led...)
+    # Movemos aquí el 'extra_data' antiguo porque suelen ser características del poste.
+    extra_data = Column(JSON, nullable=True)
+
+    # Cache de líneas: ["175", "V5", "N12"]
+    # Reemplaza a 'connections_data' para pintar el mapa rápido.
+    lines_summary = Column(JSON, default=list) 
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relación inversa: Acceso a todos los RouteStops que ocurren aquí
+    route_stops = relationship("DBRouteStop", back_populates="station", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<PhysicalStation(id={self.id}, name={self.name})>"
+    
+class DBRouteStop(Base):
+    __tablename__ = "route_stops"
+
+    # ID autoincremental propio (ya no es un string compuesto raro)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # FK a tu tabla de líneas existente
+    # ondelete="CASCADE" asegura que si borras la línea, se borran sus paradas de ruta
+    line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True, nullable=False)
+    
+    # FK a la nueva tabla física
+    station_id = Column(String, ForeignKey("physical_stations.id"), index=True, nullable=False)
+
+    order = Column(Integer, nullable=False, index=True)
+    
+    # Campos opcionales útiles para UI
+    direction = Column(String, nullable=True)      # "ida", "vuelta"
+    is_origin = Column(Boolean, default=False)
+    is_destination = Column(Boolean, default=False)
+
+    # Relaciones
+    station = relationship("DBPhysicalStation", back_populates="route_stops")
+    
+    # Relación con tu tabla de líneas (DBLine)
+    # Asumo que tu modelo DBLine existe y tiene tablename="lines"
+    line = relationship("DBLine", back_populates="stops") 
+
+    def __repr__(self):
+        return f"<RouteStop(line={self.line_id}, station={self.station_id}, order={self.order})>"
+    
+class DBBicingStation(Base):
+    __tablename__ = "bicing_stations"
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    latitude = Column(Float, index=True)
+    longitude = Column(Float, index=True)
+    
+    # Datos dinámicos (se actualizan constantemente)
+    slots = Column(Integer)
+    mechanical_bikes = Column(Integer)
+    electrical_bikes = Column(Integer)
+    availability = Column(Integer)
+    
+    last_updated = Column(DateTime)

@@ -106,8 +106,7 @@ class FgcService(ServiceBase):
         return await super().get_stations_by_name(station_name, TransportType.FGC)
     
     async def get_station_by_code(self, station_code: str) -> Optional[Station]:
-        all_stations = await self.get_stations_by_name("")
-        return next((s for s in all_stations if str(s.code) == str(station_code)), None)
+        return await super().get_station_by_code(station_code, TransportType.FGC)
     
     async def get_line_by_id(self, line_id: str) -> Optional[Line]:
         lines = await self.get_all_lines()

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 sys.path.append(os.getcwd())
 
+from src.application.services.transport.bicing_service import BicingService
 from src.domain.schemas.models import DBLine
 from src.infrastructure.database.database import engine
 from src.infrastructure.database.base import Base
@@ -61,7 +62,7 @@ async def seed_stations(metro_service: MetroService, bus_service: BusService, tr
         await conn.run_sync(Base.metadata.create_all)
 
     try:
-        logger.info("📥 Sincronizando servicios con validación de integridad...")        
+        logger.info("📥 Sincronizando servicios con validación de integridad...")
         await asyncio.gather(
             metro_service.sync_stations(valid_lines_filter=valid_line_ids),
             bus_service.sync_stations(valid_lines_filter=valid_line_ids),
@@ -75,6 +76,16 @@ async def seed_stations(metro_service: MetroService, bus_service: BusService, tr
 
     except Exception as e:
         logger.error(f"❌ Error crítico en el Seeder: {e}")
+
+    
+async def seed_bicing(bicing_service: BicingService):
+    try:
+        logger.info("📥 Sincronizando servicio de Bicing...")
+        await bicing_service.sync_stations()
+    except Exception as e:
+        logger.error(f"❌ Error crítico en el Seeder: {e}")
+        
+    
 
 if __name__ == "__main__":
     if sys.platform == 'win32':

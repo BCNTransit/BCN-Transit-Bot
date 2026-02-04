@@ -1,77 +1,130 @@
-from typing import List, Optional
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import selectinload
+from typing import List, Optional, Tuple
+from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-from src.domain.schemas.models import DBStation
+from src.domain.schemas.models import DBPhysicalStation, DBRouteStop
 
 class StationsRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self.session_factory = session_factory
         
-    async def get_by_transport_type(self, transport_type: str) -> List[DBStation]:
+    async def get_by_transport_type(self, transport_type: str) -> List[DBPhysicalStation]:
+        """
+        Obtiene las estaciones FÍSICAS para pintar en el mapa.
+        Usamos DBPhysicalStation porque contiene lat, lon y el resumen de líneas.
+        """
         async with self.session_factory() as session:
             stmt = (
-                select(DBStation)
-                .where(DBStation.transport_type == transport_type)
-                .options(selectinload(DBStation.line))
+                select(DBPhysicalStation)
+                .where(DBPhysicalStation.transport_type == transport_type)
+                # No necesitamos cargar 'route_stops' aquí, con 'lines_summary' basta para el mapa
             )
             result = await session.execute(stmt)
             return result.scalars().all()
 
-    async def get_by_line_id(self, line_db_id: str) -> List[DBStation]:
+    async def get_by_line_id(self, line_db_id: str) -> List[DBRouteStop]:
+        """
+        Obtiene la RUTA ordenada.
+        Cargamos explícitamente la estación física Y la línea para evitar DetachedInstanceError.
+        """
         async with self.session_factory() as session:
             stmt = (
-                select(DBStation)
-                .where(DBStation.line_id == line_db_id)
-                .order_by(DBStation.order)
-                .options(selectinload(DBStation.line))
+                select(DBRouteStop)
+                .where(DBRouteStop.line_id == line_db_id)
+                .order_by(DBRouteStop.order)
+                .options(
+                    joinedload(DBRouteStop.station),                    
+                    selectinload(DBRouteStop.line) 
+                )
             )
             result = await session.execute(stmt)
             return result.scalars().all()
 
-    async def get_by_id(self, station_id: str) -> Optional[DBStation]:
+    async def get_by_id(self, station_id: str) -> Optional[DBPhysicalStation]:
+        """
+        Obtiene el detalle de una estación física (ej: al hacer click en el mapa).
+        Cargamos también qué líneas paran ahí detalladamente.
+        """
         async with self.session_factory() as session:
-            stmt = select(DBStation).where(DBStation.id == station_id)
+            stmt = (
+                select(DBPhysicalStation)
+                .where(DBPhysicalStation.id == station_id)
+                # Opcional: Cargar todas las paradas de ruta asociadas para ver detalles
+                # de origen/destino de las líneas que pasan por aquí.
+                .options(selectinload(DBPhysicalStation.route_stops))
+            )
+            result = await session.execute(stmt)
+            return result.scalars().first()
+        
+    async def get_by_code(self, code: str, transport_type: str) -> Optional[DBPhysicalStation]:
+        """
+        Busca una estación física específica por su código visual.
+        """
+        async with self.session_factory() as session:
+            stmt = (
+                select(DBPhysicalStation)
+                .where(DBPhysicalStation.code == code)
+                .where(DBPhysicalStation.transport_type == transport_type)
+                # No necesitamos cargar route_stops, solo la info física
+            )
             result = await session.execute(stmt)
             return result.scalars().first()
 
-    async def upsert_many(self, stations: List[DBStation]):
-        if not stations:
-            return
-
+    async def get_all_raw(self) -> List[DBPhysicalStation]:
+        """
+        Devuelve todas las estaciones físicas (útil para sitemaps o debug).
+        """
         async with self.session_factory() as session:
-            valid_columns = {c.name for c in DBStation.__table__.columns}
-
-            stations_data = []
-            for s in stations:
-                data = {
-                    k: v for k, v in s.__dict__.items() 
-                    if k in valid_columns
-                }
-                stations_data.append(data)
-
-            stmt = insert(DBStation).values(stations_data)
-
-            update_dict = {
-                col.name: stmt.excluded[col.name]
-                for col in DBStation.__table__.columns
-                if col.name != 'id'
-            }
-
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['id'],
-                set_=update_dict
-            )
-
-            await session.execute(stmt)
-            await session.commit()
-
-    async def get_all_raw(self) -> List[DBStation]:
-        async with self.session_factory() as session:
-            stmt = (
-                select(DBStation).options(selectinload(DBStation.line)) 
-            )
-            
+            stmt = select(DBPhysicalStation)
             result = await session.execute(stmt)
             return result.scalars().all()
+
+    async def get_nearby(
+        self, 
+        lat: float, 
+        lon: float, 
+        radius_km: float, 
+        transport_type: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Tuple[DBPhysicalStation, float]]:
+        """
+        Busca estaciones cercanas usando SQL.
+        Retorna una lista de tuplas (Estación, Distancia_KM).
+        """
+        async with self.session_factory() as session:
+            # 1. Bounding Box (Filtro rápido por índice de lat/lon)
+            # 1 grado latitud ≈ 111km
+            delta_lat = radius_km / 111.0
+            delta_lon = radius_km / (111.0 * func.cos(func.radians(lat)))
+            
+            # 2. Definir la fórmula Haversine en SQL
+            # 6371 es el radio de la Tierra en km
+            distance_expr = (
+                6371.0 * func.acos(
+                    func.cos(func.radians(lat)) * func.cos(func.radians(DBPhysicalStation.latitude)) * func.cos(func.radians(DBPhysicalStation.longitude) - func.radians(lon)) + 
+                    func.sin(func.radians(lat)) * func.sin(func.radians(DBPhysicalStation.latitude))
+                )
+            ).label("distance_km")
+
+            # 3. Construir Query
+            stmt = (
+                select(DBPhysicalStation, distance_expr)
+                .where(
+                    and_(
+                        DBPhysicalStation.latitude.between(lat - delta_lat, lat + delta_lat),
+                        DBPhysicalStation.longitude.between(lon - delta_lon, lon + delta_lon)
+                    )
+                )
+                .where(distance_expr <= radius_km)
+            )
+
+            # Filtro opcional por transporte
+            if transport_type:
+                stmt = stmt.where(DBPhysicalStation.transport_type == transport_type)
+
+            # Ordenar por cercanía y limitar
+            stmt = stmt.order_by("distance_km").limit(limit)
+
+            result = await session.execute(stmt)
+            # Retorna [(DBPhysicalStation, 0.45), (DBPhysicalStation, 1.2)...]
+            return result.all()

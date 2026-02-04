@@ -1,16 +1,18 @@
 from abc import abstractmethod
 import asyncio
 from collections import defaultdict
-from typing import Callable, Any, Dict, List, Set, TypeVar
+from datetime import datetime
+from typing import Callable, Any, Dict, List, Optional, Set, TypeVar
 import time
 
 from rapidfuzz import process, fuzz
 
+from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.connections import Connections
 from src.infrastructure.database.repositories.stations_repository import StationsRepository
 from src.domain.models.common.station import Station
 from src.infrastructure.mappers.line_mapper import LineMapper
-from src.domain.schemas.models import DBLine, DBStation
+from src.domain.schemas.models import DBLine, DBPhysicalStation, DBRouteStop
 from src.application.services.user_data_manager import UserDataManager
 from src.domain.models.common.alert import Alert
 from src.application.utils.utils import Utils
@@ -21,6 +23,7 @@ from src.infrastructure.database.database import async_session_factory
 from src.core.logger import logger
 from src.application.utils.html_helper import HtmlHelper
 from src.application.services.cache_service import CacheService
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 T = TypeVar("T")
 
@@ -31,6 +34,25 @@ class ServiceBase:
         self.stations_repository = StationsRepository(async_session_factory)
         self.cache_service = cache_service
         self.user_data_manager = user_data_manager
+        self._lines_metadata_cache: Dict[str, DBLine] = {}
+        self._cache_last_updated = 0
+
+    async def _ensure_lines_cache(self):
+        if self._lines_metadata_cache:
+            return
+
+        logger.info("🔄 Pre-loading lines cache for rich connections...")
+        
+        # Obtenemos TODAS las líneas (bus, metro, tram...)
+        all_lines = await self.line_repository.get_all(transport_type=None)
+        
+        # CLAVE COMPUESTA: "metro-L1", "bus-V5", "bus-1"
+        self._lines_metadata_cache = {
+            f"{line.transport_type}-{line.code}": line 
+            for line in all_lines
+        }
+        
+        logger.info(f"✅ Lines cache loaded with {len(self._lines_metadata_cache)} unique lines.")
 
     async def get_all_lines(self, transport_type: TransportType) -> List[Line]:
         start = time.perf_counter()
@@ -65,53 +87,229 @@ class ServiceBase:
         return final_lines
 
     async def get_stations_by_line_code(self, transport_type: TransportType, line_code: str) -> List[Station]:
-        start = time.perf_counter()
+        # 1. Cargar caché de líneas (si no está cargada)
+        await self._ensure_lines_cache()
 
-        db_stations, alerts_dict = await asyncio.gather(
+        # 2. Query Principal (RouteStops)
+        db_results, alerts_dict = await asyncio.gather(
             self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_code}"),
             self._get_alerts_map(transport_type)
         )
 
-        if not db_stations:
+        if not db_results:
             return []
 
-        final_stations = [self._map_db_to_domain(model) for model in db_stations]
-        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="name")
+        final_stations = []
+        for route_stop in db_results:
+            physical = route_stop.station
+            extra = physical.extra_data or {}
+            
+            # 3. Construcción de Conexiones Ricas usando la Caché
+            # physical.lines_summary es ["L1", "175"]
+            rich_connections = self._build_rich_connections(
+                line_codes=physical.lines_summary,
+                current_line_code=line_code,
+                station_transport_type=transport_type
+            )
 
-        elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_line({line_code}) -> {len(final_stations)} stations ({elapsed:.4f}s)")
+            domain_obj = Station(
+                id=physical.id,
+                original_id=physical.id.split('-')[-1] if '-' in physical.id else physical.id,
+                code=physical.code or "",
+                name=physical.name,
+                latitude=physical.latitude,
+                longitude=physical.longitude,
+                order=route_stop.order,
+                transport_type=transport_type,
+                description=physical.description,
+                
+                # Contexto
+                line_code=line_code,
+                line_name=getattr(route_stop.line, 'name', line_code),
+                
+                # Extra Data
+                station_group_code=int(extra.get('station_group_code')) if extra.get('station_group_code') else None,
+                moute_id=str(extra.get('moute_id')) if extra.get('moute_id') else None,
+                outbound_code=extra.get('outbound_code'),
+                return_code=extra.get('return_code'),
+                direction=route_stop.direction,
+                
+                has_alerts=False,
+                alerts=[],
+
+                # AQUI ESTÁ LA MAGIA: Pasamos el objeto rico
+                connections=rich_connections
+            )
+            final_stations.append(domain_obj)
+
+        self._enrich_with_alerts(final_stations, alerts_dict, key_attr="name")
         return final_stations
 
-    async def get_stations_by_name(self, station_name: str, transport_type: TransportType) -> List[Station]:
+    def _build_rich_connections(self, line_codes: List[str], current_line_code: str, station_transport_type: TransportType) -> Optional["Connections"]:
+        if not line_codes:
+            return None
+
+        rich_lines = []
+        
+        # Convertimos el Enum a string (ej: "metro", "bus")
+        type_prefix = station_transport_type.value if hasattr(station_transport_type, 'value') else str(station_transport_type)
+        
+        for code in line_codes:
+            if code == current_line_code:
+                continue
+
+            # BÚSQUEDA CONTEXTUAL
+            lookup_key = f"{type_prefix}-{code}"
+            
+            line_data = self._lines_metadata_cache.get(lookup_key)
+            
+            if not line_data and type_prefix == 'nitbus':
+                 line_data = self._lines_metadata_cache.get(f"bus-{code}")
+
+            if line_data:
+                rich_lines.append({
+                    "id": line_data.id,
+                    "code": line_data.code,
+                    "name": line_data.name,
+                    "description": line_data.description,
+                    "origin": line_data.origin,
+                    "destination": line_data.destination,
+                    "color": line_data.color,
+                    "transport_type": line_data.transport_type
+                })
+            else:
+                rich_lines.append({
+                    "id": f"unknown-{code}",
+                    "code": code,
+                    "name": code,
+                    "color": "000000"
+                })
+
+        return {"lines": rich_lines}
+    
+    async def get_station_by_code(self, station_code: str, transport_type: TransportType) -> Optional[Station]:
+        """
+        Busca una estación de forma eficiente.
+        Intenta usar la caché global si existe; si no, hace una query puntual a la DB.
+        """
+        start = time.perf_counter()
+        
+        cache_key = f"all_stations_{transport_type.value}"
+        cached_list = await self.cache_service.get(cache_key)
+        
+        station = None
+
+        if cached_list:
+            station = next((s for s in cached_list if str(s.code) == str(station_code)), None)
+            source = "CACHE_LIST"
+        else:
+            source = "DB_SINGLE_FETCH"
+            
+            await self._ensure_lines_cache()
+            
+            db_station = await self.stations_repository.get_by_code(station_code, transport_type.value)
+            
+            if db_station:
+                station = self._map_physical_to_domain(db_station, transport_type)                
+                alerts_map = await self._get_alerts_map(transport_type)
+                self._enrich_with_alerts([station], alerts_map, key_attr="name")
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] get_station_by_code({station_code}) via {source} -> Found: {station is not None} ({elapsed:.4f}s)")
+        
+        return station
+
+    async def get_stations_by_name(self, station_name: str, transport_type: TransportType = TransportType.METRO) -> List[Station]:
+        """
+        Obtiene estaciones FÍSICAS para el buscador o el mapa general.
+        """
         start = time.perf_counter()
         cache_key = f"all_stations_{transport_type.value}"
 
+        # Función interna para buscar en DB y Mapear si no hay caché
         async def fetch_and_map():
-            models = await self.stations_repository.get_by_transport_type(transport_type.value)
-            return [self._map_db_to_domain(model) for model in models]
+            # 1. Asegurar que tenemos metadatos de líneas para las conexiones
+            await self._ensure_lines_cache()
 
+            # 2. Obtener estaciones físicas únicas (DBPhysicalStation)
+            physical_models = await self.stations_repository.get_by_transport_type(transport_type.value)
+            
+            # 3. Mapear a Dominio usando la caché de líneas
+            return [
+                self._map_physical_to_domain(p_model, transport_type) 
+                for p_model in physical_models
+            ]
+
+        # Orquestación de Caché + API + Alertas
         stations_task = self._get_from_cache_or_api(
             cache_key=cache_key,
             api_call=fetch_and_map,
-            cache_ttl=86400
+            cache_ttl=86400 # 24 horas (las paradas físicas no se mueven)
         )
         alerts_task = self._get_alerts_map(transport_type)
 
+        # Ejecución paralela
         all_stations, alerts_dict = await asyncio.gather(stations_task, alerts_task)
 
+        # Filtrado (Buscador)
         if not station_name:
             result = all_stations
         else:
             result = self.fuzzy_search(
-                query=station_name, items=all_stations, key=lambda s: s.name, threshold=75
+                query=station_name, 
+                items=all_stations, 
+                key=lambda s: s.name, 
+                threshold=75
             )
 
+        # Enriquecimiento final con alertas en tiempo real
         self._enrich_with_alerts(result, alerts_dict, key_attr="name")
 
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} matches ({elapsed:.4f}s)")
         return result
 
+    async def get_nearby_stations(self, lat: float, lon: float, radius: float, transport_type: TransportType = None, limit: int = 50) -> List[NearbyStation]:
+        start = time.perf_counter()
+        
+        # 1. Consultar Repository (Filtro en base de datos)
+        # Esto nos devuelve solo lo que está cerca
+        db_results = await self.stations_repository.get_nearby(
+            lat=lat, 
+            lon=lon, 
+            radius_km=radius, 
+            transport_type=transport_type,
+            limit=limit
+        )
+
+        if not db_results:
+            return []
+
+        # Aseguramos caché para las conexiones ricas
+        await self._ensure_lines_cache()
+
+        # 2. Mapear resultados
+        final_results = []
+        for db_obj, distance in db_results:
+            t_type = TransportType(db_obj.transport_type)
+            station_obj = self._map_physical_to_domain(db_obj, t_type)
+            
+            nearby = NearbyStation(
+                type=station_obj.transport_type.value,
+                station_name=station_obj.name,
+                station_code=station_obj.code,
+                coordinates=(station_obj.latitude, station_obj.longitude),
+                distance_km=distance,
+                line_name=station_obj.line_name or "",
+                line_code=station_obj.line_code or ""
+            )
+            
+            final_results.append(nearby)
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] Nearby sync found {len(final_results)} in {elapsed:.4f}s")
+        return final_results
+    
     async def sync_lines(self, transport_type: TransportType):
         raw_lines = await self.fetch_lines()
         logger.info(f"⏳ {len(raw_lines)} {transport_type.value} lines to be sync in DB.")
@@ -150,49 +348,201 @@ class ServiceBase:
         await self._sync_batch(raw_lines, transform_line, self.line_repository, f"{transport_type.value} lines")
 
     async def sync_stations(self, transport_type: TransportType, valid_lines_filter: set = None):
+        """
+        Sincroniza estaciones con arquitectura de 2 niveles:
+        1. PhysicalStation: Infraestructura única (deduplicada por Grupo o Coordenadas).
+        2. RouteStop: Evento de parada en una línea específica.
+        """
         raw_stations = await self.fetch_stations()
-        logger.info(f"⏳ {len(raw_stations)} {transport_type.value} stations found. Starting sync...")
+        logger.info(f"⏳ {len(raw_stations)} {transport_type.value} stations found. Starting hybrid sync...")
 
+        # 0. Filtro previo de líneas (si aplica)
         if valid_lines_filter:
             original_count = len(raw_stations)
-            
             raw_stations = [
                 s for s in raw_stations 
                 if f"{transport_type.value}-{s.line_code}" in valid_lines_filter
             ]
-            
             diff = original_count - len(raw_stations)
             if diff > 0:
-                logger.warning(f"🧹 {transport_type.value}: Se descartaron {diff} estaciones huérfanas (línea no encontrada).")
+                logger.warning(f"🧹 {transport_type.value}: Se descartaron {diff} estaciones huérfanas.")
 
-        VALID_COLS = {
-            'id', 'original_id', 'code', 'name', 'description',
-            'latitude', 'longitude', 'transport_type', 'order', 
-            'line_id', 'connections_data', 'extra_data'
-        }
+        # --- FASE 1: Procesamiento en Memoria (Deduplicación Inteligente) ---
+        
+        physical_stations_map = {}
+        stops_by_line = defaultdict(list)
+        
+        # Índice de deduplicación híbrido.
+        # Guarda claves tanto de GRUPO ("group-123") como de POSICIÓN ((lat, lon))
+        # Valor: El 'clean_id' maestro que debe usarse.
+        dedup_lookup = {} 
 
-        async def transform_station(raw: Station) -> DBStation:
-            db_id = f"{transport_type.value}-{raw.line_code}-{raw.id}"
+        for raw in raw_stations:
+            # A. EXTRACCIÓN DE DATOS (Necesaria para ver si hay group_code)
+            # Extraemos extra_data usando tu método auxiliar
+            extra = self._extract_extra_data(raw, {'id', 'original_id', 'code', 'name', 'lat', 'lon'})
+            
+            # Sanitización de JSON inmediata (Convertir Enums a Strings para evitar crasheos)
+            t_type_str = transport_type.value if hasattr(transport_type, 'value') else str(transport_type)
+            if extra:
+                for k, v in extra.items():
+                    if isinstance(v, TransportType):
+                        extra[k] = v.value
+
+            # Intentamos obtener el código de grupo (común en Metro/Tram)
+            group_code = None
+            if extra and 'station_group_code' in extra:
+                group_code = extra['station_group_code']
+
+            # B. LÓGICA DE DEDUPLICACIÓN (Buscamos si la estación ya existe)
+            clean_id = None
+            
+            # Prioridad 1: Por Código de Grupo (Lógica estricta)
+            if group_code:
+                group_key = f"group-{group_code}"
+                if group_key in dedup_lookup:
+                    clean_id = dedup_lookup[group_key]
+
+            # Prioridad 2: Por Coordenadas (Si no hay grupo o no se encontró)
+            if not clean_id:
+                # Redondeo a 5 decimales (~1.1 metros) para agrupar postes idénticos
+                lat_rounded = round(raw.latitude, 5)
+                lon_rounded = round(raw.longitude, 5)
+                coord_key = (lat_rounded, lon_rounded)
+                
+                if coord_key in dedup_lookup:
+                    clean_id = dedup_lookup[coord_key]
+
+            # Si sigue siendo None, es una estación NUEVA
+            if not clean_id:
+                try:
+                    number_part = str(int(raw.id)) # "00055" -> "55"
+                except (ValueError, TypeError):
+                    number_part = str(raw.id)
+
+                # Prefijo para Namespacing (evitar colisión Bus 33 vs Metro 33)
+                # Unificamos 'nitbus' bajo 'bus' para compartir iconos
+                prefix = t_type_str
+                if prefix == 'nitbus': prefix = 'bus'
+                
+                clean_id = f"{prefix}-{number_part}"
+                
+                # REGISTRAR EN EL LOOKUP (Para que las siguientes hermanas la encuentren)
+                if group_code:
+                    dedup_lookup[f"group-{group_code}"] = clean_id
+                
+                # Siempre registramos por coordenadas también
+                dedup_lookup[(round(raw.latitude, 5), round(raw.longitude, 5))] = clean_id
+
+            # C. CONSTRUCCIÓN DE ESTACIÓN FÍSICA
+            if clean_id not in physical_stations_map:
+                physical_stations_map[clean_id] = {
+                    "id": clean_id,
+                    "code": str(raw.code) if raw.code else None,
+                    "name": raw.name,
+                    "description": raw.description,
+                    "lat": raw.latitude, # Usamos la latitud real de la primera ocurrencia
+                    "lon": raw.longitude,
+                    "municipality": getattr(raw, 'municipality', None),
+                    "transport_type": t_type_str,
+                    "extra_data": extra,
+                    "lines_set": set()
+                }
+            
+            # Añadimos la línea al set (Merge automático de líneas L1, L2, etc.)
+            physical_stations_map[clean_id]["lines_set"].add(raw.line_code)
+
+            # D. PREPARACIÓN DE ROUTE STOPS (Datos de ruta)
+            # Guardamos tupla (raw, clean_id) para no modificar el objeto original
             line_db_id = f"{transport_type.value}-{raw.line_code}"
+            direction = getattr(raw, 'direction', 'única')
             
-            extra = self._extract_extra_data(raw, VALID_COLS)
-            
-            return DBStation(
-                id=db_id,
-                original_id=str(raw.id),
-                code=str(raw.code),
-                name=raw.name,
-                description=raw.description,
-                latitude=raw.latitude,
-                longitude=raw.longitude,
-                transport_type=transport_type.value,
-                order=raw.order,
-                line_id=line_db_id,
-                connections_data=None, 
-                extra_data=extra
-            )
+            stops_by_line[(line_db_id, direction)].append((raw, clean_id))
 
-        await self._sync_batch(raw_stations, transform_station, self.stations_repository, f"{transport_type.value} stations")
+        # --- FASE 2: Lógica de Ruta (Orden y Origen/Destino) ---
+        
+        route_stops_buffer = []
+
+        for (line_id, direction), stops_tuples in stops_by_line.items():
+            # Ordenamos por el campo 'order' del objeto raw (posición 0 de la tupla)
+            sorted_tuples = sorted(stops_tuples, key=lambda x: x[0].order)
+            total_stops = len(sorted_tuples)
+            
+            for index, (stop, s_clean_id) in enumerate(sorted_tuples):
+                route_stops_buffer.append(DBRouteStop(
+                    line_id=line_id,
+                    station_id=s_clean_id, # Usamos el ID físico deduplicado
+                    order=stop.order,
+                    direction=direction,
+                    is_origin=(index == 0),
+                    is_destination=(index == total_stops - 1)
+                ))
+
+        # --- FASE 3: Persistencia Robusta (UPSERT) ---
+        
+        async with async_session_factory() as session:
+            try:
+                # 3.1 Guardar Estaciones Físicas (UPSERT por lotes)
+                if physical_stations_map:
+                    stations_data = []
+                    for p_data in physical_stations_map.values():
+                        stations_data.append({
+                            "id": p_data["id"],
+                            "code": p_data["code"],
+                            "name": p_data["name"],
+                            "description": p_data["description"],
+                            "latitude": p_data["lat"],
+                            "longitude": p_data["lon"],
+                            "municipality": p_data["municipality"],
+                            "transport_type": p_data["transport_type"],
+                            "extra_data": p_data["extra_data"],
+                            "lines_summary": sorted(list(p_data["lines_set"])),
+                            "updated_at": datetime.utcnow()
+                        })
+
+                    logger.info(f"📍 Upserting {len(stations_data)} physical stations...")
+
+                    # DEFINIMOS TAMAÑO DE LOTE (1000 * 11 cols = 11.000 params < 32.767)
+                    BATCH_SIZE = 1000 
+                    
+                    for i in range(0, len(stations_data), BATCH_SIZE):
+                        chunk = stations_data[i : i + BATCH_SIZE]
+                        
+                        stmt = pg_insert(DBPhysicalStation).values(chunk)
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=['id'], 
+                            set_={
+                                "name": stmt.excluded.name,
+                                "lines_summary": stmt.excluded.lines_summary,
+                                "extra_data": stmt.excluded.extra_data,
+                                "updated_at": stmt.excluded.updated_at
+                            }
+                        )
+                        await session.execute(stmt)
+                    
+                    # Flush intermedio para asegurar que las FK existen
+                    await session.flush()
+
+                # 3.2 Guardar Route Stops (Batching manual recomendado para volúmenes altos)
+                if route_stops_buffer:
+                    logger.info(f"🚏 Inserting {len(route_stops_buffer)} route stops...")
+                    
+                    # Aunque SQLAlchemy suele gestionar esto, para evitar problemas con drivers
+                    # asíncronos en inserciones masivas (>10k), mejor lo troceamos también.
+                    BATCH_SIZE_STOPS = 2000 # Menos columnas, podemos meter más filas
+                    
+                    for i in range(0, len(route_stops_buffer), BATCH_SIZE_STOPS):
+                        chunk_stops = route_stops_buffer[i : i + BATCH_SIZE_STOPS]
+                        session.add_all(chunk_stops)
+                        await session.flush() # Flush por cada lote para liberar memoria
+                
+                await session.commit()
+                logger.info(f"✅ {transport_type.value} Sync completed successfully.")
+
+            except Exception as e:
+                logger.error(f"❌ Error syncing stations: {e}")
+                await session.rollback()
+                raise e
 
     async def _sync_batch(self, raw_items: List[Any], transform_func: Callable[[Any], Any], repository: Any, label: str):
         batch_size = 500
@@ -355,6 +705,48 @@ class ServiceBase:
                 logger.warning(f"Error parsing connections for {st.code}: {e}")
             
         return st
+    
+    def _map_physical_to_domain(self, physical: DBPhysicalStation, t_type: TransportType) -> Station:
+        """
+        Mapea una estación física (sin contexto de línea específica) al dominio.
+        Los campos de ruta (order, line_code) se quedan vacíos o genéricos.
+        """
+        extra = physical.extra_data or {}
+        
+        # Construimos conexiones ricas usando la caché de líneas
+        # physical.lines_summary es ["L1", "L3"]
+        rich_connections = self._build_rich_connections(
+            line_codes=physical.lines_summary,
+            current_line_code="", # No estamos en ninguna línea específica
+            station_transport_type=t_type
+        )
+
+        return Station(
+            id=physical.id,
+            original_id=physical.id.split('-')[-1] if '-' in physical.id else physical.id,
+            code=physical.code or "",
+            name=physical.name,
+            latitude=physical.latitude,
+            longitude=physical.longitude,
+            description=physical.description,
+            transport_type=t_type,
+            
+            # Campos de Ruta: Al ser búsqueda global, no aplican
+            order=0, 
+            line_code=None,
+            line_name=None,
+            direction=None,
+            is_origin=False,
+            is_destination=False,
+
+            # Campos Extra
+            station_group_code=int(extra.get('station_group_code')) if extra.get('station_group_code') else None,
+            moute_id=str(extra.get('moute_id')) if extra.get('moute_id') else None,
+            
+            has_alerts=False,
+            alerts=[],
+            connections=rich_connections
+        )
 
     @abstractmethod
     async def fetch_alerts(self) -> List[Alert]: pass

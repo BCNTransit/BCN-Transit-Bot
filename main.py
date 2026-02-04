@@ -11,7 +11,6 @@ from telegram.ext import (
 )
 
 from src.infrastructure.external.api.amb_api_service import AmbApiService, AmbGtfsStore
-from src.application.services.connections_generator import ConnectionsGenerator
 from src.core.logger import logger
 
 from src.presentation.api.server import create_app
@@ -57,7 +56,7 @@ from src.infrastructure.external.api.fgc_api_service import FgcApiService
 from src.infrastructure.localization.language_manager import LanguageManager
 from src.infrastructure.database.database import init_db, reset_transport_data
 from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
-from src.infrastructure.database.seeders.lines_seeder import seed_lines, seed_stations
+from src.infrastructure.database.seeders.seeder import seed_lines, seed_stations, seed_bicing
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -168,7 +167,7 @@ class BotApp:
         self.bus_service = BusService(self.tmb_api_service, self.cache_service, self.user_data_manager, self.language_manager)
         self.tram_service = TramService(self.tram_api_service, self.language_manager, self.cache_service, self.user_data_manager)
         self.rodalies_service = RodaliesService(self.rodalies_api_service, self.language_manager, self.cache_service, self.user_data_manager)
-        self.bicing_service = BicingService(self.bicing_api_service, self.cache_service)
+        self.bicing_service = BicingService(self.bicing_api_service)
         self.fgc_service = FgcService(self.fgc_api_service, self.language_manager, self.cache_service, self.user_data_manager)
 
         logger.info("Transport services initialized")
@@ -193,19 +192,13 @@ class BotApp:
 
         logger.info("Handlers initialized")
 
-    async def run_seeder(self):
-        await reset_transport_data()
-        await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
-        await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
-
     async def run_seeder_job(self):
-        """Wrapper para el job del scheduler con logs"""
         logger.info("🕐 Ejecutando tarea programada: SEEDER DIARIO...")
         try:
-            await self.run_seeder()            
-            generator = ConnectionsGenerator()
-            await generator.generate_and_save_connections()
-            
+            await reset_transport_data()
+            await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+            await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+            await seed_bicing(self.bicing_service)
             logger.info("✅ Seeder diario finalizado con éxito.")
         except Exception as e:
             logger.error(f"❌ Error en el seeder diario: {e}")
@@ -276,11 +269,6 @@ class BotApp:
         logger.info("Handlers registered successfully")
 
     async def run_daily_cycle(self):
-        """
-        Método compuesto para el CRON:
-        1. Descarga el GTFS y actualiza la RAM (AmbGtfsStore).
-        2. Ejecuta el Seeder para actualizar la BD con esos datos nuevos.
-        """
         logger.info("🔄 [CRON] Iniciando ciclo de actualización diario...")
         
         try:
@@ -319,6 +307,9 @@ class BotApp:
         await AmbApiService.initialize()
         await self.run_realtime_updater()
 
+        logger.info("🚀 Forzando sincronización inicial de datos (Seeder)...")
+        asyncio.create_task(self.run_seeder_job())
+
         self.scheduler.add_job(
             self.run_daily_cycle, 
             trigger=CronTrigger(hour=4, minute=0),
@@ -334,10 +325,18 @@ class BotApp:
             max_instances=1,
             coalesce=True
         )
-        self.scheduler.start()
 
-        logger.info("🚀 Forzando sincronización inicial de datos (Seeder)...")
-        asyncio.create_task(self.run_seeder())
+        self.scheduler.add_job(
+            seed_bicing,
+            kwargs={'bicing_service': self.bicing_service},
+            trigger=IntervalTrigger(seconds=60),
+            id='realtime_bicing_sync',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+
+        self.scheduler.start()
 
         self.application = ApplicationBuilder().token(self.telegram_token).build()
         self.register_handlers()
@@ -431,7 +430,7 @@ async def daily_gtfs_updater():
 async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando carga inicial de GTFS (esto puede tardar unos segundos)...")
     await AmbApiService.initialize()    
-    task = asyncio.create_task(daily_gtfs_updater())    
+    task = asyncio.create_task(daily_gtfs_updater())
     yield    
     task.cancel()
 

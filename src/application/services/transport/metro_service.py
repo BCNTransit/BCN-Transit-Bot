@@ -74,14 +74,7 @@ class MetroService(ServiceBase):
         return await super().get_stations_by_name(station_name, TransportType.METRO)
 
     async def get_station_by_code(self, station_code: str) -> Optional[Station]:
-        start = time.perf_counter()
-        
-        all_stations = await self.get_stations_by_name("")        
-        station = next((s for s in all_stations if str(s.code) == str(station_code)), None)
-        
-        elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_station_by_code({station_code}) found: {station is not None} ({elapsed:.4f}s)")
-        return station
+        return await super().get_station_by_code(station_code, TransportType.METRO)
 
     async def get_line_by_code(self, line_code: str) -> Optional[Line]:
         lines = await self.get_all_lines()
