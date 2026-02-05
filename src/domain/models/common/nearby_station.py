@@ -1,18 +1,15 @@
 from dataclasses import dataclass, field
-from typing import Tuple, Optional, List
+from typing import Dict, List, Tuple, Optional
 
 @dataclass
 class NearbyStation:
     type: str
     station_name: str
-    station_code: str
+    physical_station_id: str
     coordinates: Tuple[float, float]
     distance_km: float
     
-    # Campos comunes / transporte
-    line_name: Optional[str] = ""
-    line_code: Optional[str] = ""
-    line_name_with_emoji: str = ""
+    lines: List[Dict[str, str]] = field(default_factory=list)
     
     # Campos específicos de Bicing (opcionales)
     slots: Optional[int] = None

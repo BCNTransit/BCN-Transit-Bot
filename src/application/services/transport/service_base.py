@@ -7,6 +7,7 @@ import time
 
 from rapidfuzz import process, fuzz
 
+from src.infrastructure.database.repositories.alerts_repository import AlertsRepository
 from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.connections import Connections
 from src.infrastructure.database.repositories.stations_repository import StationsRepository
@@ -32,6 +33,7 @@ class ServiceBase:
     def __init__(self, cache_service: CacheService = None, user_data_manager: UserDataManager = None):
         self.line_repository = LineRepository(async_session_factory)
         self.stations_repository = StationsRepository(async_session_factory)
+        self.alerts_repository = AlertsRepository(async_session_factory)
         self.cache_service = cache_service
         self.user_data_manager = user_data_manager
         self._lines_metadata_cache: Dict[str, DBLine] = {}
@@ -57,9 +59,9 @@ class ServiceBase:
     async def get_all_lines(self, transport_type: TransportType) -> List[Line]:
         start = time.perf_counter()
         
-        db_lines, alerts_dict = await asyncio.gather(
+        db_lines, affected_names_set = await asyncio.gather(
             self.line_repository.get_all(transport_type.value),
-            self._get_alerts_map(transport_type)
+            self.alerts_repository.get_affected_line_names(transport_type.value) 
         )
 
         if not db_lines:
@@ -68,17 +70,17 @@ class ServiceBase:
         final_lines = []
         for model in db_lines:
             line = Line.model_validate(model)
-            line.id = model.original_id
+            line.id = model.id
 
             if not line.origin or not line.destination or line.origin == line.destination:
                 continue
             
-            if model.extra_data and not line.category:
+            if model.extra_data and not getattr(line, 'category', None):
                 line.category = model.extra_data.get('category')
             
+            line.has_alerts = line.name in affected_names_set
+            line.alerts = []
             final_lines.append(line)
-
-        self._enrich_with_alerts(final_lines, alerts_dict, key_attr="name")
 
         final_lines.sort(key=Utils.sort_lines)
         
@@ -86,13 +88,28 @@ class ServiceBase:
         logger.info(f"[{self.__class__.__name__}] get_all_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
         return final_lines
 
-    async def get_stations_by_line_code(self, transport_type: TransportType, line_code: str) -> List[Station]:
-        # 1. Cargar caché de líneas (si no está cargada)
+    async def get_stations_by_line_id(self, transport_type: TransportType, line_id: str) -> List[Station]:
+        if "-" in line_id:
+            try:
+                prefix = line_id.split("-")[0].lower()
+                id_transport_type = TransportType(prefix)
+                
+                if id_transport_type != transport_type:
+                    logger.error(
+                        f"⛔ Type Mismatch: Requested {transport_type} but Line ID belongs to {id_transport_type} ({line_id}). "
+                        "Returning empty list to enforce consistency."
+                    )
+                    return []
+                    
+            except ValueError:
+                return []
+            
         await self._ensure_lines_cache()
+        line_metadata = self._lines_metadata_cache.get(line_id)
+        actual_line_name = line_metadata.name if line_metadata else line_id
 
-        # 2. Query Principal (RouteStops)
         db_results, alerts_dict = await asyncio.gather(
-            self.stations_repository.get_by_line_id(f"{transport_type.value}-{line_code}"),
+            self.stations_repository.get_by_line_id(line_id),
             self._get_alerts_map(transport_type)
         )
 
@@ -107,15 +124,16 @@ class ServiceBase:
             # 3. Construcción de Conexiones Ricas usando la Caché
             # physical.lines_summary es ["L1", "175"]
             rich_connections = self._build_rich_connections(
-                line_codes=physical.lines_summary,
-                current_line_code=line_code,
+                line_entries=physical.lines_summary,
+                current_line_name=actual_line_name,
                 station_transport_type=transport_type
             )
 
             domain_obj = Station(
                 id=physical.id,
                 original_id=physical.id.split('-')[-1] if '-' in physical.id else physical.id,
-                code=physical.code or "",
+                code=route_stop.station_external_code or "",
+                station_group_code=route_stop.station_group_code,
                 name=physical.name,
                 latitude=physical.latitude,
                 longitude=physical.longitude,
@@ -124,11 +142,10 @@ class ServiceBase:
                 description=physical.description,
                 
                 # Contexto
-                line_code=line_code,
-                line_name=getattr(route_stop.line, 'name', line_code),
+                line_code='',
+                line_name=getattr(route_stop.line, 'name', ''),
                 
                 # Extra Data
-                station_group_code=int(extra.get('station_group_code')) if extra.get('station_group_code') else None,
                 moute_id=str(extra.get('moute_id')) if extra.get('moute_id') else None,
                 outbound_code=extra.get('outbound_code'),
                 return_code=extra.get('return_code'),
@@ -144,28 +161,39 @@ class ServiceBase:
 
         self._enrich_with_alerts(final_stations, alerts_dict, key_attr="name")
         return final_stations
-
-    def _build_rich_connections(self, line_codes: List[str], current_line_code: str, station_transport_type: TransportType) -> Optional["Connections"]:
-        if not line_codes:
+    
+    def _build_rich_connections(self, line_entries: List[any], current_line_name: str, station_transport_type: TransportType) -> Optional[dict]:
+        if not line_entries:
             return None
 
         rich_lines = []
         
-        # Convertimos el Enum a string (ej: "metro", "bus")
-        type_prefix = station_transport_type.value if hasattr(station_transport_type, 'value') else str(station_transport_type)
-        
-        for code in line_codes:
-            if code == current_line_code:
+        type_str = station_transport_type.value if hasattr(station_transport_type, 'value') else str(station_transport_type)
+        valid_types = {type_str}
+        if type_str == 'nitbus':
+            valid_types.add('bus')
+
+        for entry in line_entries:
+            # --- 1. NORMALIZACIÓN (El Fix) ---
+            # Extraemos el nombre limpio y el color (si viene)
+            if isinstance(entry, dict):
+                name = entry.get("name", "Unknown")
+                fallback_color = entry.get("color", "808080")
+            else:
+                name = str(entry)
+                fallback_color = "808080"
+
+            # 2. Filtro de auto-referencia
+            if str(name) == str(current_line_name):
                 continue
 
-            # BÚSQUEDA CONTEXTUAL
-            lookup_key = f"{type_prefix}-{code}"
+            # 3. Búsqueda en Caché
+            line_data = None
+            for cached_line in self._lines_metadata_cache.values():
+                if cached_line.name == name and cached_line.transport_type in valid_types:
+                    line_data = cached_line
+                    break
             
-            line_data = self._lines_metadata_cache.get(lookup_key)
-            
-            if not line_data and type_prefix == 'nitbus':
-                 line_data = self._lines_metadata_cache.get(f"bus-{code}")
-
             if line_data:
                 rich_lines.append({
                     "id": line_data.id,
@@ -175,23 +203,26 @@ class ServiceBase:
                     "origin": line_data.origin,
                     "destination": line_data.destination,
                     "color": line_data.color,
+                    "text_color": getattr(line_data, 'text_color', 'FFFFFF'),
                     "transport_type": line_data.transport_type
                 })
             else:
+                # Fallback visual usando los datos que extrajimos
                 rich_lines.append({
-                    "id": f"unknown-{code}",
-                    "code": code,
-                    "name": code,
-                    "color": "000000"
+                    "id": f"unknown-{name}",
+                    "code": name, # Ahora 'name' es string, Pydantic estará feliz
+                    "name": name,
+                    # Si no está en caché, usamos el color que venía en el summary (¡Mejora visual!)
+                    "color": fallback_color,
+                    "transport_type": station_transport_type
                 })
+
+        if not rich_lines:
+            return None
 
         return {"lines": rich_lines}
     
     async def get_station_by_code(self, station_code: str, transport_type: TransportType) -> Optional[Station]:
-        """
-        Busca una estación de forma eficiente.
-        Intenta usar la caché global si existe; si no, hace una query puntual a la DB.
-        """
         start = time.perf_counter()
         
         cache_key = f"all_stations_{transport_type.value}"
@@ -210,7 +241,7 @@ class ServiceBase:
             db_station = await self.stations_repository.get_by_code(station_code, transport_type.value)
             
             if db_station:
-                station = self._map_physical_to_domain(db_station, transport_type)                
+                station = self._map_physical_to_domain(db_station, transport_type)
                 alerts_map = await self._get_alerts_map(transport_type)
                 self._enrich_with_alerts([station], alerts_map, key_attr="name")
 
@@ -272,8 +303,6 @@ class ServiceBase:
     async def get_nearby_stations(self, lat: float, lon: float, radius: float, transport_type: TransportType = None, limit: int = 50) -> List[NearbyStation]:
         start = time.perf_counter()
         
-        # 1. Consultar Repository (Filtro en base de datos)
-        # Esto nos devuelve solo lo que está cerca
         db_results = await self.stations_repository.get_nearby(
             lat=lat, 
             lon=lon, 
@@ -285,23 +314,21 @@ class ServiceBase:
         if not db_results:
             return []
 
-        # Aseguramos caché para las conexiones ricas
         await self._ensure_lines_cache()
 
-        # 2. Mapear resultados
         final_results = []
-        for db_obj, distance in db_results:
-            t_type = TransportType(db_obj.transport_type)
-            station_obj = self._map_physical_to_domain(db_obj, t_type)
-            
+        for db_obj, distance in db_results:            
             nearby = NearbyStation(
-                type=station_obj.transport_type.value,
-                station_name=station_obj.name,
-                station_code=station_obj.code,
-                coordinates=(station_obj.latitude, station_obj.longitude),
+                type=db_obj.transport_type,
+                station_name=db_obj.name,                
+                physical_station_id=db_obj.id,
+                coordinates=(db_obj.latitude, db_obj.longitude),
                 distance_km=distance,
-                line_name=station_obj.line_name or "",
-                line_code=station_obj.line_code or ""
+                lines=db_obj.lines_summary or [],                
+                slots=None,
+                mechanical=None,
+                electrical=None,
+                availability=None
             )
             
             final_results.append(nearby)
@@ -317,7 +344,7 @@ class ServiceBase:
         VALID_COLS = {
             'id', 'original_id', 'code', 'name', 'description',
             'latitude', 'longitude', 'transport_type', 'stations',
-            'destination', 'origin', 'color', 'extra_data'
+            'destination', 'origin', 'color', 'extra_data', 'has_alerts', 'alerts', 'name_with_emoji'
         }
 
         async def transform_line(raw: Line) -> DBLine:
@@ -347,148 +374,165 @@ class ServiceBase:
 
         await self._sync_batch(raw_lines, transform_line, self.line_repository, f"{transport_type.value} lines")
 
-    async def sync_stations(self, transport_type: TransportType, valid_lines_filter: set = None):
-        """
-        Sincroniza estaciones con arquitectura de 2 niveles:
-        1. PhysicalStation: Infraestructura única (deduplicada por Grupo o Coordenadas).
-        2. RouteStop: Evento de parada en una línea específica.
-        """
+    async def sync_stations(self, transport_type: TransportType, lines_map: dict = None):
         raw_stations = await self.fetch_stations()
         logger.info(f"⏳ {len(raw_stations)} {transport_type.value} stations found. Starting hybrid sync...")
 
-        # 0. Filtro previo de líneas (si aplica)
-        if valid_lines_filter:
+        # 0. Filtrado usando el lines_map (Whitelist)
+        if lines_map:
             original_count = len(raw_stations)
             raw_stations = [
                 s for s in raw_stations 
-                if f"{transport_type.value}-{s.line_code}" in valid_lines_filter
+                if f"{transport_type.value}-{s.line_code}" in lines_map
             ]
             diff = original_count - len(raw_stations)
             if diff > 0:
-                logger.warning(f"🧹 {transport_type.value}: Se descartaron {diff} estaciones huérfanas.")
+                logger.warning(f"🧹 {transport_type.value}: Se descartaron {diff} estaciones huérfanas (líneas no activas).")
 
-        # --- FASE 1: Procesamiento en Memoria (Deduplicación Inteligente) ---
+        # --- FASE 1: Procesamiento en Memoria ---
         
         physical_stations_map = {}
         stops_by_line = defaultdict(list)
-        
-        # Índice de deduplicación híbrido.
-        # Guarda claves tanto de GRUPO ("group-123") como de POSICIÓN ((lat, lon))
-        # Valor: El 'clean_id' maestro que debe usarse.
         dedup_lookup = {} 
 
+        excluded_fields = {
+            'id', 'original_id', 'code', 'name', 
+            'lat', 'latitude', 'lon', 'longitude', 
+            'description', 'municipality', 
+            'transport_type', 'type', 
+            'line_code', 'line_name', 'order', 'direction', 
+            'is_night'
+        }
+
         for raw in raw_stations:
-            # A. EXTRACCIÓN DE DATOS (Necesaria para ver si hay group_code)
-            # Extraemos extra_data usando tu método auxiliar
-            extra = self._extract_extra_data(raw, {'id', 'original_id', 'code', 'name', 'lat', 'lon'})
+            # 1. Extracción y Limpieza
+            extra = self._extract_extra_data(raw, excluded_fields)
             
-            # Sanitización de JSON inmediata (Convertir Enums a Strings para evitar crasheos)
             t_type_str = transport_type.value if hasattr(transport_type, 'value') else str(transport_type)
+            
             if extra:
                 for k, v in extra.items():
                     if isinstance(v, TransportType):
                         extra[k] = v.value
 
-            # Intentamos obtener el código de grupo (común en Metro/Tram)
+            # 2. Gestión del Group Code
             group_code = None
             if extra and 'station_group_code' in extra:
                 group_code = extra['station_group_code']
+                extra.pop('station_group_code', None)
 
-            # B. LÓGICA DE DEDUPLICACIÓN (Buscamos si la estación ya existe)
+            # 3. Lógica de Deduplicación
             clean_id = None
             
-            # Prioridad 1: Por Código de Grupo (Lógica estricta)
             if group_code:
                 group_key = f"group-{group_code}"
                 if group_key in dedup_lookup:
                     clean_id = dedup_lookup[group_key]
 
-            # Prioridad 2: Por Coordenadas (Si no hay grupo o no se encontró)
             if not clean_id:
-                # Redondeo a 5 decimales (~1.1 metros) para agrupar postes idénticos
-                lat_rounded = round(raw.latitude, 5)
-                lon_rounded = round(raw.longitude, 5)
-                coord_key = (lat_rounded, lon_rounded)
-                
-                if coord_key in dedup_lookup:
-                    clean_id = dedup_lookup[coord_key]
+                clean_id = dedup_lookup.get((round(raw.latitude, 5), round(raw.longitude, 5)))
 
-            # Si sigue siendo None, es una estación NUEVA
             if not clean_id:
                 try:
-                    number_part = str(int(raw.id)) # "00055" -> "55"
+                    number_part = str(int(raw.id))
                 except (ValueError, TypeError):
                     number_part = str(raw.id)
 
-                # Prefijo para Namespacing (evitar colisión Bus 33 vs Metro 33)
-                # Unificamos 'nitbus' bajo 'bus' para compartir iconos
                 prefix = t_type_str
                 if prefix == 'nitbus': prefix = 'bus'
-                
                 clean_id = f"{prefix}-{number_part}"
                 
-                # REGISTRAR EN EL LOOKUP (Para que las siguientes hermanas la encuentren)
                 if group_code:
                     dedup_lookup[f"group-{group_code}"] = clean_id
-                
-                # Siempre registramos por coordenadas también
                 dedup_lookup[(round(raw.latitude, 5), round(raw.longitude, 5))] = clean_id
 
-            # C. CONSTRUCCIÓN DE ESTACIÓN FÍSICA
+            # 4. Construcción del Objeto Estación Física
             if clean_id not in physical_stations_map:
                 physical_stations_map[clean_id] = {
                     "id": clean_id,
-                    "code": str(raw.code) if raw.code else None,
                     "name": raw.name,
-                    "description": raw.description,
-                    "lat": raw.latitude, # Usamos la latitud real de la primera ocurrencia
-                    "lon": raw.longitude,
+                    "description": raw.description, 
                     "municipality": getattr(raw, 'municipality', None),
+                    "lat": raw.latitude,
+                    "lon": raw.longitude,
                     "transport_type": t_type_str,
                     "extra_data": extra,
                     "lines_set": set()
                 }
             
-            # Añadimos la línea al set (Merge automático de líneas L1, L2, etc.)
-            physical_stations_map[clean_id]["lines_set"].add(raw.line_code)
-
-            # D. PREPARACIÓN DE ROUTE STOPS (Datos de ruta)
-            # Guardamos tupla (raw, clean_id) para no modificar el objeto original
+            # --- 5. Resolución de NOMBRE y COLOR ---
             line_db_id = f"{transport_type.value}-{raw.line_code}"
-            direction = getattr(raw, 'direction', 'única')
             
-            stops_by_line[(line_db_id, direction)].append((raw, clean_id))
+            # Valores por defecto
+            final_name = str(raw.line_code)
+            final_id = "unknown"
+            final_color = "333333" # Gris oscuro por defecto
 
-        # --- FASE 2: Lógica de Ruta (Orden y Origen/Destino) ---
+            if lines_map and line_db_id in lines_map:
+                # Caso Ideal: Usamos datos de DB (Nombre limpio + Color oficial)
+                entry = lines_map[line_db_id]
+                
+                # Soportamos tanto si el mapa trae dicts (lo nuevo) como strings (legacy)
+                if isinstance(entry, dict):
+                    final_name = entry.get("name", final_name)
+                    final_id = entry.get("id", final_id)
+                    final_color = entry.get("color", final_color)
+                else:
+                    final_name = str(entry)
+            else:
+                # Fallback: Heurística de nombre
+                raw_name = raw.line_name
+                final_name = raw_name if raw_name and len(raw_name) <= 8 else str(raw.line_code)
+                
+                # Intentamos rescatar color si viene en el objeto raw
+                if hasattr(raw, 'color') and raw.color:
+                    final_color = raw.color
+            
+            # IMPORTANTE: Guardamos una TUPLA (nombre, color) en el set para que sea única
+            physical_stations_map[clean_id]["lines_set"].add((final_name, final_id, final_color))
+
+            # 6. Preparación de Route Stops
+            direction = getattr(raw, 'direction', 'única')
+            stops_by_line[(line_db_id, direction)].append((raw, clean_id, group_code))
+
+        # --- FASE 2: Lógica de Ruta ---
         
         route_stops_buffer = []
 
         for (line_id, direction), stops_tuples in stops_by_line.items():
-            # Ordenamos por el campo 'order' del objeto raw (posición 0 de la tupla)
             sorted_tuples = sorted(stops_tuples, key=lambda x: x[0].order)
             total_stops = len(sorted_tuples)
             
-            for index, (stop, s_clean_id) in enumerate(sorted_tuples):
+            for index, (stop, s_clean_id, s_group_code) in enumerate(sorted_tuples):
                 route_stops_buffer.append(DBRouteStop(
                     line_id=line_id,
-                    station_id=s_clean_id, # Usamos el ID físico deduplicado
+                    physical_station_id=s_clean_id,
+                    station_external_code=str(stop.code) if stop.code else "",
+                    station_group_code=str(s_group_code) if s_group_code else None,
                     order=stop.order,
                     direction=direction,
                     is_origin=(index == 0),
                     is_destination=(index == total_stops - 1)
                 ))
 
-        # --- FASE 3: Persistencia Robusta (UPSERT) ---
+        # --- FASE 3: Persistencia Robusta ---
         
         async with async_session_factory() as session:
             try:
-                # 3.1 Guardar Estaciones Físicas (UPSERT por lotes)
+                # 3.1 Guardar Estaciones Físicas
                 if physical_stations_map:
                     stations_data = []
                     for p_data in physical_stations_map.values():
+                        
+                        # TRANSFORMACIÓN FINAL: Set de Tuplas -> Lista de Diccionarios
+                        # Ordenamos por nombre (x[0]) para que el JSON sea consistente
+                        lines_summary_json = [
+                            {"name": name, "id": id, "color": color}
+                            for name, id, color in sorted(list(p_data["lines_set"]), key=lambda x: x[0])
+                        ]
+
                         stations_data.append({
                             "id": p_data["id"],
-                            "code": p_data["code"],
                             "name": p_data["name"],
                             "description": p_data["description"],
                             "latitude": p_data["lat"],
@@ -496,13 +540,14 @@ class ServiceBase:
                             "municipality": p_data["municipality"],
                             "transport_type": p_data["transport_type"],
                             "extra_data": p_data["extra_data"],
-                            "lines_summary": sorted(list(p_data["lines_set"])),
+                            
+                            # Aquí guardamos la estructura rica con color
+                            "lines_summary": lines_summary_json,
+                            
                             "updated_at": datetime.utcnow()
                         })
 
                     logger.info(f"📍 Upserting {len(stations_data)} physical stations...")
-
-                    # DEFINIMOS TAMAÑO DE LOTE (1000 * 11 cols = 11.000 params < 32.767)
                     BATCH_SIZE = 1000 
                     
                     for i in range(0, len(stations_data), BATCH_SIZE):
@@ -520,21 +565,16 @@ class ServiceBase:
                         )
                         await session.execute(stmt)
                     
-                    # Flush intermedio para asegurar que las FK existen
                     await session.flush()
 
-                # 3.2 Guardar Route Stops (Batching manual recomendado para volúmenes altos)
+                # 3.2 Guardar Route Stops
                 if route_stops_buffer:
                     logger.info(f"🚏 Inserting {len(route_stops_buffer)} route stops...")
-                    
-                    # Aunque SQLAlchemy suele gestionar esto, para evitar problemas con drivers
-                    # asíncronos en inserciones masivas (>10k), mejor lo troceamos también.
-                    BATCH_SIZE_STOPS = 2000 # Menos columnas, podemos meter más filas
-                    
+                    BATCH_SIZE_STOPS = 2000
                     for i in range(0, len(route_stops_buffer), BATCH_SIZE_STOPS):
                         chunk_stops = route_stops_buffer[i : i + BATCH_SIZE_STOPS]
                         session.add_all(chunk_stops)
-                        await session.flush() # Flush por cada lote para liberar memoria
+                        await session.flush() 
                 
                 await session.commit()
                 logger.info(f"✅ {transport_type.value} Sync completed successfully.")
@@ -542,8 +582,8 @@ class ServiceBase:
             except Exception as e:
                 logger.error(f"❌ Error syncing stations: {e}")
                 await session.rollback()
-                raise e
-
+                raise e 
+            
     async def _sync_batch(self, raw_items: List[Any], transform_func: Callable[[Any], Any], repository: Any, label: str):
         batch_size = 500
         current_batch = []
@@ -707,24 +747,20 @@ class ServiceBase:
         return st
     
     def _map_physical_to_domain(self, physical: DBPhysicalStation, t_type: TransportType) -> Station:
-        """
-        Mapea una estación física (sin contexto de línea específica) al dominio.
-        Los campos de ruta (order, line_code) se quedan vacíos o genéricos.
-        """
         extra = physical.extra_data or {}
         
         # Construimos conexiones ricas usando la caché de líneas
         # physical.lines_summary es ["L1", "L3"]
         rich_connections = self._build_rich_connections(
-            line_codes=physical.lines_summary,
-            current_line_code="", # No estamos en ninguna línea específica
+            line_entries=physical.lines_summary,
+            current_line_name="",
             station_transport_type=t_type
         )
 
         return Station(
             id=physical.id,
             original_id=physical.id.split('-')[-1] if '-' in physical.id else physical.id,
-            code=physical.code or "",
+            code="",
             name=physical.name,
             latitude=physical.latitude,
             longitude=physical.longitude,

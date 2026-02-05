@@ -84,8 +84,8 @@ class TramService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.TRAM)
 
-    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:          
-        return await super().get_stations_by_line_code(TransportType.TRAM, line_code)
+    async def get_stations_by_line_id(self, line_id: str) -> List[Station]:          
+        return await super().get_stations_by_line_id(TransportType.TRAM, line_id)
 
     async def get_stations_by_name(self, stop_name: str) -> List[Station]:
         return await super().get_stations_by_name(stop_name, TransportType.TRAM)
@@ -101,38 +101,54 @@ class TramService(ServiceBase):
     # ⚡ MÉTODOS REAL-TIME / ESPECÍFICOS
     # =========================================================================
 
-    async def get_stop_routes(self, stop_code: str) -> List[LineRoute]:
+    async def get_stop_routes(self, physical_station_id: str, line_id: str) -> List[LineRoute]:
         start = time.perf_counter()
         
-        stop = await self.get_stop_by_code(stop_code)
+        await self._ensure_lines_cache()        
+        line_metadata = self._lines_metadata_cache.get(line_id)
+        if not line_metadata:
+            logger.warning(f"⚠️ Metadata not found for line_id: {line_id}")
+            return []
         
-        if not stop:
-            logger.warning(f"Stop {stop_code} not found")
+        route_stop = await self.stations_repository.get_stop_by_physical_and_line_id(
+            physical_station_id, 
+            line_id
+        )
+
+        if not route_stop:
+            logger.warning(f"⚠️ Tram Stop not found for {physical_station_id} + {line_id}")
             return []
 
-        outbound = stop.outbound_code or (stop.extra_data.get('outbound_code') if stop.extra_data else None)
-        inbound = stop.return_code or (stop.extra_data.get('return_code') if stop.extra_data else None)
+        station = route_stop.station
+        extra = station.extra_data or {}
+        outbound = extra.get('outbound_code')
+        inbound = extra.get('return_code')
 
         if not outbound and not inbound:
-             return []
+            return []
 
-        routes = await self._get_from_cache_or_api(
-            cache_key=f"tram_routes_{stop_code}",
+        raw_cache_key = f"tram_full_response_{outbound}_{inbound}"
+
+        all_routes = await self._get_from_cache_or_api(
+            cache_key=raw_cache_key,
             api_call=lambda: self.tram_api_service.get_next_trams_at_stop(outbound, inbound),
             cache_ttl=30,
         )
-        
-        if routes:
-            lines = await self.get_all_lines()
-            line_map = {l.name: l for l in lines}
-            
-            for route in routes:
-                matching_line = line_map.get(route.line_name)
-                if matching_line:
-                    route.line_id = matching_line.id
-                    route.line_code = matching_line.code
-                    route.color = matching_line.color
+
+        if not all_routes:
+            return []
+
+        target_line_name = line_metadata.name.upper()
+        filtered_routes = []
+
+        for route in all_routes:
+            if route.line_name.upper() == target_line_name:
+                route.line_id = line_id
+                route.color = line_metadata.color or "008E78"
+                
+                filtered_routes.append(route)
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stop_routes({stop_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
-        return routes
+        logger.info(f"[{self.__class__.__name__}] RT {line_id} @ {physical_station_id} -> {len(filtered_routes)} routes (taken from pool of {len(all_routes)}) ({elapsed:.4f}s)")
+        
+        return filtered_routes

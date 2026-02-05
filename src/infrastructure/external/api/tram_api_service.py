@@ -201,7 +201,7 @@ class TramApiService:
             for connection in connections
         ]
 
-    async def get_next_trams_at_stop(self, outbound_code: int, return_code: int):   
+    async def get_next_trams_at_stop(self, outbound_code: int, return_code: int) -> List[LineRoute]:   
         next_trams = await self._request(
             "GET",
             f"https://tram-web-service.tram.cat/api/opendata/stopTimes"
@@ -210,8 +210,8 @@ class TramApiService:
         )
 
         madrid_tz = ZoneInfo("Europe/Madrid")
-
         routes_dict = {}
+
         for item in next_trams:
             raw_time = item.get("arrivalTime")
             if not raw_time:
@@ -219,16 +219,15 @@ class TramApiService:
 
             try:
                 dt = datetime.fromisoformat(raw_time)
-
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=madrid_tz)
-
                 final_timestamp = normalize_to_seconds(int(dt.timestamp()))
-
             except ValueError:
                 continue
 
-            key = (item["lineName"], item["code"], item["stopName"], item["destination"])
+            line_name = item.get("lineName", "").upper()
+            
+            key = (line_name, item["destination"])
 
             next_tram = NextTrip(
                 id=item["vehicleId"],
@@ -237,14 +236,14 @@ class TramApiService:
 
             if key not in routes_dict:
                 routes_dict[key] = LineRoute(
-                    line_id=None,
-                    line_code=None,
+                    line_id=line_name,      
+                    line_code=line_name,
                     route_id=item["code"],
-                    line_name=item["lineName"],
+                    line_name=line_name,
                     destination=item["destination"],
                     next_trips=[next_tram],
                     line_type=TransportType.TRAM,
-                    color="008E78"
+                    color=None
                 )
             else:
                 routes_dict[key].next_trips.append(next_tram)

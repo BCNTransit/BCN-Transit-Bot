@@ -67,8 +67,8 @@ class MetroService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.METRO)
 
-    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:            
-        return await super().get_stations_by_line_code(TransportType.METRO, line_code)
+    async def get_stations_by_line_id(self, line_id: str) -> List[Station]:            
+        return await super().get_stations_by_line_id(TransportType.METRO, line_id)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         return await super().get_stations_by_name(station_name, TransportType.METRO)
@@ -88,27 +88,34 @@ class MetroService(ServiceBase):
     # ⚡ REAL TIME & SPECIFIC FEATURES
     # =========================================================================
 
-    async def get_station_routes(self, station_code: str) -> List[LineRoute]:
+    async def get_station_routes(self, physical_station_id: str, line_id: str) -> List[LineRoute]:
         start = time.perf_counter()
-        cache_key = f"metro_station_{station_code}_routes"
+        cache_key = f"rt_{physical_station_id}_{line_id}"
 
         cached_routes = await self.cache_service.get(cache_key)
         if cached_routes:
              return cached_routes
+        
+        route_stop = await self.stations_repository.get_stop_by_physical_and_line_id(physical_station_id, line_id)
 
-        routes = await self.tmb_api_service.get_next_metro_at_station(station_code)
+        if not route_stop:
+            logger.warning(f"⚠️ No se encontró RouteStop para {physical_station_id} + {line_id}")
+            return []
+        
+        external_code = route_stop.station_external_code
+        routes = await self.tmb_api_service.get_next_metro_at_station(external_code, line_id)
         
         routes = list({r.route_id: r for r in routes}.values())
 
         if not any(r.next_trips for r in routes):
-            logger.debug(f"Sin tiempo real para {station_code}, buscando horarios...")
-            routes = await self.tmb_api_service.get_next_scheduled_metro_at_station(station_code)
+            logger.debug(f"Sin tiempo real para {external_code}, buscando horarios...")
+            routes = await self.tmb_api_service.get_next_scheduled_metro_at_station(external_code)
         
         if routes:
             await self.cache_service.set(cache_key, routes, ttl=15)
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
+        logger.info(f"[{self.__class__.__name__}] get_station_routes({external_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
         return routes
 
     async def get_station_accesses(self, group_code_id: str) -> List[MetroAccess]:

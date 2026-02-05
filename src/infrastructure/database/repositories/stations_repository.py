@@ -2,7 +2,8 @@ from typing import List, Optional, Tuple
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-from src.domain.schemas.models import DBPhysicalStation, DBRouteStop
+from src.domain.enums.transport_type import TransportType
+from src.domain.schemas.models import DBLine, DBPhysicalStation, DBRouteStop
 
 class StationsRepository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
@@ -23,10 +24,6 @@ class StationsRepository:
             return result.scalars().all()
 
     async def get_by_line_id(self, line_db_id: str) -> List[DBRouteStop]:
-        """
-        Obtiene la RUTA ordenada.
-        Cargamos explícitamente la estación física Y la línea para evitar DetachedInstanceError.
-        """
         async with self.session_factory() as session:
             stmt = (
                 select(DBRouteStop)
@@ -40,6 +37,17 @@ class StationsRepository:
             result = await session.execute(stmt)
             return result.scalars().all()
 
+    async def get_stop_by_physical_and_line_id(self, physical_id: str, line_id: str) -> Optional[DBRouteStop]:
+        async with self.session_factory() as session:
+            stmt = (
+                select(DBRouteStop)
+                .options(joinedload(DBRouteStop.station))
+                .where(DBRouteStop.physical_station_id == physical_id)
+                .where(DBRouteStop.line_id == line_id) 
+            )
+            result = await session.execute(stmt)
+            return result.scalars().first()
+        
     async def get_by_id(self, station_id: str) -> Optional[DBPhysicalStation]:
         """
         Obtiene el detalle de una estación física (ej: al hacer click en el mapa).
@@ -58,15 +66,21 @@ class StationsRepository:
         
     async def get_by_code(self, code: str, transport_type: str) -> Optional[DBPhysicalStation]:
         """
-        Busca una estación física específica por su código visual.
+        Busca una estación física a través de sus paradas de ruta.
+        Si la estación tiene 3 líneas (L1, L3, L5), buscar por el código 
+        de CUALQUIERA de ellas devolverá la estación física correcta.
         """
         async with self.session_factory() as session:
             stmt = (
                 select(DBPhysicalStation)
-                .where(DBPhysicalStation.code == code)
+                # 1. Unimos con la tabla de paradas
+                .join(DBRouteStop, DBPhysicalStation.id == DBRouteStop.physical_station_id)
+                # 2. Filtramos por el código externo en la tabla hija
+                .where(DBRouteStop.station_external_code == code)
+                # 3. Filtramos por tipo de transporte en la tabla padre
                 .where(DBPhysicalStation.transport_type == transport_type)
-                # No necesitamos cargar route_stops, solo la info física
             )
+            
             result = await session.execute(stmt)
             return result.scalars().first()
 

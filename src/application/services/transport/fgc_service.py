@@ -99,8 +99,8 @@ class FgcService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.FGC)
     
-    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:
-        return await super().get_stations_by_line_code(TransportType.FGC, line_code)
+    async def get_stations_by_line_id(self, line_id: str) -> List[Station]:
+        return await super().get_stations_by_line_id(TransportType.FGC, line_id)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         return await super().get_stations_by_name(station_name, TransportType.FGC)
@@ -116,44 +116,75 @@ class FgcService(ServiceBase):
     # ⚡ MÉTODOS REAL-TIME
     # =========================================================================
 
-    async def get_station_routes(self, station_code: str) -> List[LineRoute]:
+    async def get_station_routes(self, physical_station_id: str, line_id: str) -> List[LineRoute]:
         start = time.perf_counter()
-        cache_key = f"fgc_station_{station_code}_routes"
-
-        cached = await self.cache_service.get(cache_key)
-        if cached: return cached
         
-        station = await self.get_station_by_code(station_code)
-        if not station: return []
+        await self._ensure_lines_cache()
+        line_metadata = self._lines_metadata_cache.get(line_id)
+        if not line_metadata:
+            logger.warning(f"⚠️ Metadata not found for line_id: {line_id}")
+            return []
 
-        routes = []
+        route_stop = await self.stations_repository.get_stop_by_physical_and_line_id(physical_station_id, line_id)
+        if not route_stop:
+            logger.warning(f"⚠️ No se encontró RouteStop para {physical_station_id} + {line_id}")
+            return []
 
-        if station.moute_id:
-            try:
-                raw_routes = await self.fgc_api_service.get_moute_next_departures(station.moute_id)
-                routes = self._map_moute_response(raw_routes)
-            except Exception as e:
-                logger.warning(f"FGC Moute API failed for {station_code}: {e}")
+        station = route_stop.station
+        moute_id = station.extra_data.get('moute_id')
 
-        if not routes:
+        cache_key = f"fgc_full_{physical_station_id}"
+        
+        all_routes = []
+        
+        if moute_id:
+            async def fetch_and_map_moute():
+                raw_data = await self.fgc_api_service.get_moute_next_departures(moute_id)
+                return self._map_moute_response(raw_data)
+
+            all_routes = await self._get_from_cache_or_api(
+                cache_key=cache_key,
+                api_call=fetch_and_map_moute,
+                cache_ttl=30
+            )
+
+        target_line_name = line_metadata.name.upper()
+        filtered_routes = []
+
+        if all_routes:
+            for route in all_routes:
+                if route.line_name.upper() == target_line_name:
+                    route.line_id = line_id
+                    route.color = line_metadata.color
+                    filtered_routes.append(route)
+        
+        if not filtered_routes and not all_routes:
             try:
                 line_name_clean = station.extra_data.get('line_original_name') or (station.line.name if station.line else "")
-                
                 raw_routes = await self.fgc_api_service.get_next_departures(station.name, line_name_clean)
-                routes = self._map_fallback_response(raw_routes, station)
+                
+                fallback_routes = self._map_fallback_response(raw_routes, station)
+                for r in fallback_routes:
+                    r.line_id = line_id
+                    r.color = line_metadata.color
+                    filtered_routes.append(r)
+                    
             except Exception as e:
-                logger.error(f"FGC Fallback API failed for {station_code}: {e}")
+                logger.error(f"FGC Fallback API failed for {physical_station_id}: {e}")
 
-        if routes:
-            await self.cache_service.set(cache_key, routes, ttl=30)
-        
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
-        return routes
+        source = "CACHE/POOL" if all_routes else "FALLBACK"
+        logger.info(f"[{self.__class__.__name__}] FGC {line_id} @ {physical_station_id} -> {len(filtered_routes)} routes ({source}) ({elapsed:.4f}s)")
+        
+        return filtered_routes
 
     # --- Helpers de Mapeo (Privados) ---
 
     def _map_moute_response(self, raw_routes: dict) -> List[LineRoute]:
+        """
+        Convierte el diccionario completo de Moute {'L6': ..., 'S1': ...} 
+        en una lista plana con TODAS las rutas mezcladas.
+        """
         routes = []
         for line_name, destinations in raw_routes.items():
             for destination, trips in destinations.items():
@@ -164,19 +195,30 @@ class FgcService(ServiceBase):
                     )
                     for trip in trips
                 ]
+                
                 routes.append(LineRoute(
-                    destination=destination,
-                    next_trips=next_trips,
+                    # --- IMPORTANTE ---
+                    # Usamos el nombre visual ("L6") como ID temporal.
+                    # El servicio principal lo sobrescribirá con el ID real ("fgc-l6") después.
+                    line_id=line_name, 
+                    # ------------------
                     line_name=line_name,
                     line_code=line_name,
+                    destination=destination,
+                    next_trips=next_trips,
                     line_type=TransportType.FGC,
                     route_id=f"{line_name}-{destination}",
-                    color=''
+                    color='' # Se rellenará en el servicio
                 ))
         return routes
 
     def _map_fallback_response(self, raw_routes: dict, station: Station) -> List[LineRoute]:
+        """
+        Mapeo para la API antigua/fallback.
+        """
         routes = []
+        l_name = station.line.name if station.line else "FGC"
+        
         for direction, trips in raw_routes.items():
             next_trips = [
                 NextTrip(
@@ -185,13 +227,13 @@ class FgcService(ServiceBase):
                 )
                 for trip in trips
             ]
-            l_name = station.line.name if station.line else "FGC"
             
             routes.append(LineRoute(
-                destination=direction,
-                next_trips=next_trips,
+                line_id=l_name, # Placeholder
                 line_name=l_name,
                 line_type=TransportType.FGC,
+                destination=direction,
+                next_trips=next_trips,
                 route_id=f"{l_name}-{direction}"
             ))
         return routes

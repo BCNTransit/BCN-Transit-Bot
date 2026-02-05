@@ -97,8 +97,8 @@ class BusService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.BUS)
     
-    async def get_stops_by_line_code(self, line_code: str) -> List[Station]:       
-        return await super().get_stations_by_line_code(TransportType.BUS, line_code)
+    async def get_stations_by_line_id(self, line_id: str) -> List[Station]:       
+        return await super().get_stations_by_line_id(TransportType.BUS, line_id)
 
     async def get_stops_by_name(self, stop_name: str) -> List[Station]:
         return await super().get_stations_by_name(stop_name, TransportType.BUS)
@@ -142,21 +142,29 @@ class BusService(ServiceBase):
     # ⚡ MÉTODOS REAL-TIME (iBus)
     # =========================================================================
 
-    async def get_stop_routes(self, stop_code: str) -> any:
+    async def get_stop_routes(self, physical_station_id: str, line_id: str) -> any:
         start = time.perf_counter()
-        
-        data = await self._get_from_cache_or_api(
-            cache_key=f"bus_stop_{stop_code}_routes",
-            api_call=lambda: self.tmb_api_service.get_next_bus_at_stop(stop_code),
-            cache_ttl=15
-        )
 
-        if len(data) == 0:
-            return await AmbApiService.get_next_arrivals(stop_code)
+        cache_key = f"rt_bus_{physical_station_id}"
+
+        cached_routes = await self.cache_service.get(cache_key)
+        if cached_routes:
+             return cached_routes
+        
+        route_stop = await self.stations_repository.get_stop_by_physical_and_line_id(physical_station_id, line_id)
+        if not route_stop:
+            logger.warning(f"⚠️ No se encontró RouteStop para {physical_station_id} + {line_id}")
+            return []
+        
+        external_code = route_stop.station_external_code
+        routes = await self.tmb_api_service.get_next_bus_at_stop(external_code)
+
+        if len(routes) == 0:
+            return await AmbApiService.get_next_arrivals(external_code)
         
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stop_routes({stop_code}) -> iBus Data ({elapsed:.4f} s)")
-        return data
+        logger.info(f"[{self.__class__.__name__}] get_stop_routes({external_code}) -> iBus Data ({elapsed:.4f} s)")
+        return routes
     
 
     def _deduplicate_stations(self, stations: List[Station]) -> List[Station]:

@@ -104,7 +104,7 @@ class TmbApiService:
         stations.sort(key=lambda x: x.order)
         return stations
 
-    async def get_next_metro_at_station(self, station_id) -> List[LineRoute]:
+    async def get_next_metro_at_station(self, station_id, line_id) -> List[LineRoute]:
         url = f'{self.BASE_URL_ITRANSIT}/metro/estacions?estacions={station_id}'
         data = await self._get(url)
 
@@ -118,7 +118,7 @@ class TmbApiService:
                         ) for metro in route_data.get("propers_trens", [])
                     ]
                     route = LineRoute(
-                        line_id=route_data["codi_linia"],
+                        line_id=line_id,
                         line_code=route_data["codi_linia"],
                         line_name=route_data["nom_linia"],
                         color=route_data["color_linia"],

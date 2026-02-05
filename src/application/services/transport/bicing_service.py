@@ -17,22 +17,28 @@ class BicingService:
 
     async def sync_stations(self):
         stations = await self.bicing_api_service.get_stations()
-        stations_data = [
-            {
-                "id": str(s.id),
-                "name": s.streetName,
-                "latitude": s.latitude,
-                "longitude": s.longitude,
-                "slots": s.slots,
-                "mechanical_bikes": s.mechanical_bikes,
-                "electrical_bikes": s.electrical_bikes,
-                "availability": s.disponibilidad,
-                "last_updated": datetime.utcnow()
-            }
-            for s in stations
-        ]
         
-        await self.bicing_repository.upsert_all(stations_data)
+        stations_data = []
+        for s in stations:
+            if not s.latitude or not s.longitude:
+                continue
+
+            stations_data.append({
+                "id": str(s.id),
+                "name": s.streetName if s.streetName else "Unknown",                
+                "latitude": self._safe_float(s.latitude),
+                "longitude": self._safe_float(s.longitude),                
+                "slots": self._safe_int(s.slots),
+                "mechanical_bikes": self._safe_int(s.mechanical_bikes),
+                "electrical_bikes": self._safe_int(s.electrical_bikes),                
+                "availability": getattr(s, 'disponibilidad', 0),                
+                "last_updated": datetime.utcnow()
+            })
+        
+        if stations_data:
+            await self.bicing_repository.upsert_all(stations_data)
+        else:
+            logger.warning("⚠️ No valid Bicing data to sync.")
 
     async def get_all_stations(self) -> List[BicingStation]:
         return await self.bicing_repository.get_all()
@@ -51,20 +57,18 @@ class BicingService:
             nearby_list.append(NearbyStation(
                 type="bicing",
                 station_name=db_obj.name,
-                station_code=str(db_obj.id),
+                physical_station_id=str(db_obj.id),
                 coordinates=(db_obj.latitude, db_obj.longitude),
                 distance_km=distance,
                 
                 # Campos vacíos de transporte
-                line_name="",
-                line_code="",
-                line_name_with_emoji="",
+                lines = [],
                 
                 # Campos específicos Bicing
                 slots=db_obj.slots,
                 mechanical=db_obj.mechanical_bikes,
                 electrical=db_obj.electrical_bikes,
-                availability=1 if db_obj.availability == "OPN" else 0
+                availability= db_obj.availability
             ))
             
         return nearby_list
@@ -119,6 +123,24 @@ class BicingService:
             availability="OPN" if obj.disponibilidad > 0 else "CLS",            
             last_updated=datetime.utcnow() 
         )
+    
+    def _safe_float(self, value) -> float:
+        """Convierte inputs sucios ('', None) a 0.0"""
+        try:
+            if value is None or value == "":
+                return 0.0
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _safe_int(self, value) -> int:
+        """Convierte inputs sucios ('', None) a 0"""
+        try:
+            if value is None or value == "":
+                return 0
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
 
     # Si necesitas la lógica fuzzy compleja que tenía ServiceBase, añádela aquí como helper privado
     # def _fuzzy_search(self, query: str, items: List[BicingStation], threshold=75) -> List[BicingStation]:

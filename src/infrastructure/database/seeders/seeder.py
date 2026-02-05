@@ -47,35 +47,49 @@ async def seed_lines(metro_service: MetroService, bus_service: BusService, tram_
 async def seed_stations(metro_service: MetroService, bus_service: BusService, tram_service: TramService,
                      rodalies_service: RodaliesService, fgc_service: FgcService):
     logger.info("🚀 Iniciando Seeder de Estaciones...")
+    lines_map = {}
 
-    valid_line_ids = set()
     try:        
         async with async_session_factory() as session:
-            logger.info("🔍 Obteniendo lista blanca de líneas válidas...")
-            result = await session.execute(select(DBLine.id))
-            valid_line_ids = set(result.scalars().all())
-            logger.info(f"✅ {len(valid_line_ids)} líneas encontradas en base de datos.")
+            logger.info("🔍 Cargando mapa de líneas (Whitelist, Nombres & Colores)...")
+            result = await session.execute(select(DBLine.id, DBLine.name, DBLine.color))
+            
+            lines_map = {
+                row.id: {
+                    "name": row.name,
+                    "id": row.id,
+                    "color": row.color or "333333"
+                } 
+                for row in result.all()
+            }
+            
+            logger.info(f"✅ {len(lines_map)} líneas cargadas en memoria con metadatos.")
+
     except Exception as e:
-        logger.error(f"❌ Error obteniendo líneas válidas: {e}")
+        logger.error(f"❌ Error crítico obteniendo líneas: {e}")
+        return
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    try:
-        logger.info("📥 Sincronizando servicios con validación de integridad...")
-        await asyncio.gather(
-            metro_service.sync_stations(valid_lines_filter=valid_line_ids),
-            bus_service.sync_stations(valid_lines_filter=valid_line_ids),
-            rodalies_service.sync_stations(valid_lines_filter=valid_line_ids),
-            tram_service.sync_stations(valid_lines_filter=valid_line_ids),
-            fgc_service.sync_stations(valid_lines_filter=valid_line_ids),
-            return_exceptions=False
-        )
-        
-        logger.info("✨ Stations Seeder completado con éxito.")
+    logger.info("📥 Sincronizando servicios en paralelo...")
 
-    except Exception as e:
-        logger.error(f"❌ Error crítico en el Seeder: {e}")
+    results = await asyncio.gather(
+        metro_service.sync_stations(lines_map),
+        bus_service.sync_stations(lines_map),
+        rodalies_service.sync_stations(lines_map),
+        tram_service.sync_stations(lines_map),
+        fgc_service.sync_stations(lines_map),
+        return_exceptions=True
+    )
+
+    for service_name, result in zip(["Metro", "Bus", "Rodalies", "Tram", "FGC"], results):
+        if isinstance(result, Exception):
+            logger.error(f"❌ {service_name} falló: {result}")
+        else:
+            logger.info(f"✅ {service_name} sincronizado.")
+
+    logger.info("✨ Proceso de Seeding finalizado.")
 
     
 async def seed_bicing(bicing_service: BicingService):

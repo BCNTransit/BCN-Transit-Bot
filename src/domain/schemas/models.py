@@ -159,30 +159,6 @@ class DBLine(Base):
 # ----------------------------
 # STATIONS
 # ----------------------------
-class DBStation(Base):
-    __tablename__ = "stations"
-
-    id = Column(String, primary_key=True, index=True)    
-    original_id = Column(String, index=True)
-    
-    code = Column(String, index=True)
-    name = Column(String)
-    description = Column(String, nullable=True)
-    
-    latitude = Column(Float)
-    longitude = Column(Float)
-    order = Column(Integer)
-    
-    transport_type = Column(String, index=True)
-
-    line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True)
-    
-    # Backref crea la relación inversa en DBLine automáticamente como 'stations_rel'
-    line = relationship("DBLine", backref="stations_rel") 
-
-    connections_data = Column(JSON, nullable=True) 
-    extra_data = Column(JSON, nullable=True)
-
 class DBNotificationLog(Base):
     __tablename__ = "notification_logs"
 
@@ -230,10 +206,7 @@ class DBPhysicalStation(Base):
     __tablename__ = "physical_stations"
 
     # ID Normalizado (ej: "237"). Primary Key.
-    id = Column(String, primary_key=True, index=True) 
-    
-    # El código visual (ej: "000237"). Útil para mostrar al usuario.
-    code = Column(String, index=True, nullable=True)
+    id = Column(String, primary_key=True, index=True)
     
     name = Column(String, nullable=False)
     description = Column(String, nullable=True) # "Pl. Catalunya / Fontanella"
@@ -251,7 +224,7 @@ class DBPhysicalStation(Base):
 
     # Cache de líneas: ["175", "V5", "N12"]
     # Reemplaza a 'connections_data' para pintar el mapa rápido.
-    lines_summary = Column(JSON, default=list) 
+    lines_summary = Column(JSONB, default=[])
 
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -272,7 +245,9 @@ class DBRouteStop(Base):
     line_id = Column(String, ForeignKey("lines.id", ondelete="CASCADE"), index=True, nullable=False)
     
     # FK a la nueva tabla física
-    station_id = Column(String, ForeignKey("physical_stations.id"), index=True, nullable=False)
+    physical_station_id = Column(String, ForeignKey("physical_stations.id"), index=True, nullable=False)
+    station_external_code = Column(String, index=True, nullable=False)
+    station_group_code = Column(String, index=True, nullable=True)
 
     order = Column(Integer, nullable=False, index=True)
     
@@ -289,7 +264,7 @@ class DBRouteStop(Base):
     line = relationship("DBLine", back_populates="stops") 
 
     def __repr__(self):
-        return f"<RouteStop(line={self.line_id}, station={self.station_id}, order={self.order})>"
+        return f"<RouteStop(line={self.line_id}, station={self.physical_station_id}, order={self.order})>"
     
 class DBBicingStation(Base):
     __tablename__ = "bicing_stations"

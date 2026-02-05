@@ -8,6 +8,7 @@ from fastapi.params import Body
 from pydantic import BaseModel, Field
 
 from firebase_admin import auth
+from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
 from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
 from src.domain.schemas.models import DBUser, UserDevice, UserSource
@@ -63,17 +64,17 @@ def get_metro_router(
     async def list_metro_lines():
         return await metro_service.get_all_lines()
     
-    @router.get("/lines/{line_code}/stations")
-    async def list_metro_stations_by_line(line_code: str):
-        return await metro_service.get_stations_by_line_code(line_code)
+    @router.get("/lines/{line_id}/stations")
+    async def list_metro_stations_by_line_id(line_id: str):
+        return await metro_service.get_stations_by_line_id(line_id)
     
     @router.get("/stations/{station_code}")
     async def get_metro_station(station_code: str):
         return await metro_service.get_station_by_code(station_code)
     
-    @router.get("/stations/{station_code}/routes")
-    async def list_metro_station_routes(station_code: str):
-        return await metro_service.get_station_routes(station_code)
+    @router.get("/stations/{physical_station_id}/routes/{line_id}")
+    async def list_metro_station_routes(physical_station_id: str, line_id: str):
+        return await metro_service.get_station_routes(physical_station_id, line_id)
     
     @router.get("/stations/{station_code}/accesses")
     async def get_metro_station_accesses(station_code: str):
@@ -94,17 +95,17 @@ def get_bus_router(
     async def list_bus_lines():
         return await bus_service.get_all_lines()
     
-    @router.get("/lines/{line_code}/stops")
-    async def list_bus_stations_by_line(line_code: str):
-        return await bus_service.get_stops_by_line_code(line_code)
+    @router.get("/lines/{line_id}/stops")
+    async def list_bus_stations_by_line(line_id: str):
+        return await bus_service.get_stations_by_line_id(line_id)
     
     @router.get("/stops/{stop_code}")
     async def get_bus_stop(stop_code: str):
         return await bus_service.get_stop_by_code(stop_code)
     
-    @router.get("/stops/{stop_code}/routes")
-    async def list_bus_stop_routes(stop_code: str):
-        return await bus_service.get_stop_routes(stop_code)
+    @router.get("/stops/{physical_station_id}/routes/{line_id}")
+    async def list_bus_stop_routes(physical_station_id: str, line_id: str):
+        return await bus_service.get_stop_routes(physical_station_id, line_id)
     
     @router.get("/stops/{stop_code}/accesses")
     async def get_bus_stop_accesses(stop_code: str):
@@ -121,17 +122,17 @@ def get_tram_router(
     async def list_tram_lines():
         return sorted(await tram_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_code}/stops")
-    async def list_tram_stops_by_line(line_code: str):
-        return await tram_service.get_stations_by_line_code(line_code)    
+    @router.get("/lines/{line_id}/stops")
+    async def list_tram_stops_by_line(line_id: str):
+        return await tram_service.get_stations_by_line_id(line_id)    
     
     @router.get("/stops/{stop_code}")
     async def get_tram_stop(stop_code: str):
         return await tram_service.get_stop_by_code(stop_code)
     
-    @router.get("/stops/{stop_code}/routes")
-    async def list_tram_stop_routes(stop_code: str):
-        return await tram_service.get_stop_routes(stop_code)
+    @router.get("/stops/{physical_station_id}/routes/{line_id}")
+    async def list_tram_stop_routes(physical_station_id: str, line_id: str):
+        return await tram_service.get_stop_routes(physical_station_id, line_id)
     
     @router.get("/stops/{stop_code}/accesses")
     async def get_tram_stop_accesses(stop_code: str):
@@ -148,17 +149,17 @@ def get_rodalies_router(
     async def list_rodalies_lines():
         return sorted(await rodalies_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_code}/stations")
-    async def list_rodalies_stations_by_line(line_code: str):
-        return await rodalies_service.get_stations_by_line_code(line_code)
+    @router.get("/lines/{line_id}/stations")
+    async def list_rodalies_stations_by_line(line_id: str):
+        return await rodalies_service.get_stations_by_line_id(line_id)
     
     @router.get("/stations/{station_code}")
     async def get_rodalies_station(station_code: str):
         return await rodalies_service.get_station_by_code(station_code)
     
-    @router.get("/stations/{station_code}/routes")
-    async def list_rodalies_station_routes(station_code: str):
-        return await rodalies_service.get_station_routes(station_code)
+    @router.get("/stations/{physical_station_id}/routes/{line_id}")
+    async def list_rodalies_station_routes(physical_station_id: str, line_id: str):
+        return await rodalies_service.get_station_routes(physical_station_id, line_id)
 
     @router.get("/stations/{station_code}/accesses")
     async def get_rodalies_station_accesses(station_code: str):
@@ -190,17 +191,17 @@ def get_fgc_router(
     async def list_fgc_lines():
         return sorted(await fgc_service.get_all_lines(), key=Utils.sort_lines)
     
-    @router.get("/lines/{line_code}/stations")
-    async def list_fgc_stations_by_line(line_code: str):
-        return await fgc_service.get_stations_by_line_code(line_code)    
+    @router.get("/lines/{line_id}/stations")
+    async def list_fgc_stations_by_line(line_id: str):
+        return await fgc_service.get_stations_by_line_id(line_id)    
     
     @router.get("/stations/{station_code}")
     async def get_fgc_station(station_code: str):
         return await fgc_service.get_station_by_code(station_code)
     
-    @router.get("/stations/{station_code}/routes")
-    async def list_fgc_station_routes(station_code: str):
-        return await fgc_service.get_station_routes(station_code)
+    @router.get("/stations/{physical_station_id}/routes/{line_id}")
+    async def list_fgc_station_routes(physical_station_id: str, line_id: str):
+        return await fgc_service.get_station_routes(physical_station_id, line_id)
 
     @router.get("/stations/{station_code}/accesses")
     async def get_fgc_station_accesses(station_code: str):
@@ -221,7 +222,7 @@ def get_results_router(
     router = APIRouter()
 
     @router.get("/near")
-    async def list_near_stations(lat: float, lon: float, radius: float = 0.5):
+    async def list_near_stations(lat: float, lon: float, radius: float = 0.5) -> List[NearbyStation]:
         transport_task = metro_service.get_nearby_stations(lat, lon, radius)        
         bicing_task = bicing_service.get_nearby_stations(lat, lon, radius)
 

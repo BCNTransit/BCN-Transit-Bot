@@ -82,8 +82,8 @@ class RodaliesService(ServiceBase):
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.RODALIES)
     
-    async def get_stations_by_line_code(self, line_code: str) -> List[Station]:           
-        return await super().get_stations_by_line_code(TransportType.RODALIES, line_code)
+    async def get_stations_by_line_id(self, line_id: str) -> List[Station]:           
+        return await super().get_stations_by_line_id(TransportType.RODALIES, line_id)
 
     async def get_stations_by_name(self, station_name: str) -> List[Station]:
         return await super().get_stations_by_name(station_name, TransportType.RODALIES)
@@ -99,15 +99,45 @@ class RodaliesService(ServiceBase):
     # ⚡ MÉTODOS REAL-TIME
     # =========================================================================
 
-    async def get_station_routes(self, station_code: str) -> List[LineRoute]:
+    async def get_station_routes(self, physical_station_id: str, line_id: str) -> List[LineRoute]:
         start = time.perf_counter()
         
-        routes = await self._get_from_cache_or_api(
-            cache_key=f"rodalies_station_{station_code}_routes",
-            api_call=lambda: self.rodalies_api_service.get_next_trains_at_station(station_code),
-            cache_ttl=15
-        )
+        await self._ensure_lines_cache()        
+        line_metadata = self._lines_metadata_cache.get(line_id)
+        if not line_metadata:
+            logger.warning(f"⚠️ Metadata not found for line_id: {line_id}")
+            return []
+
+        route_stop = await self.stations_repository.get_stop_by_physical_and_line_id(physical_station_id, line_id)
+        if not route_stop:
+            logger.warning(f"⚠️ No se encontró RouteStop para {physical_station_id} + {line_id}")
+            return []
         
+        external_code = route_stop.station_external_code
+        cache_key = f"rodalies_full_{external_code}"
+
+        all_routes = await self._get_from_cache_or_api(
+            cache_key=cache_key,
+            api_call=lambda: self.rodalies_api_service.get_next_trains_at_station(external_code),
+            cache_ttl=30
+        )
+
+        if not all_routes:
+            return []
+
+        target_line_name = line_metadata.name.upper() # "R4"
+        filtered_routes = []
+
+        for route in all_routes:
+            if route.line_name.upper() == target_line_name:
+                route.line_id = line_id 
+                route.color = line_metadata.color 
+                
+                filtered_routes.append(route)        
+
+        unique_routes = list({r.route_id: r for r in filtered_routes}.values())
+
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_station_routes({station_code}) -> {len(routes)} routes ({elapsed:.4f}s)")
-        return routes
+        logger.info(f"[{self.__class__.__name__}] RT {line_id} @ {external_code} -> {len(unique_routes)} routes (from pool of {len(all_routes)}) ({elapsed:.4f}s)")
+        
+        return unique_routes
