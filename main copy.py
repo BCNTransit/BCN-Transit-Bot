@@ -1,0 +1,466 @@
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI
+import uvicorn
+from telegram import Bot
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, 
+    MessageHandler, filters
+)
+
+from src.infrastructure.external.api.amb_api_service import AmbApiService, AmbGtfsStore
+from src.core.logger import logger
+
+from src.presentation.api.server import create_app
+
+from src.presentation.bot.menu_handler import MenuHandler
+from src.presentation.bot.transport.metro_handler import MetroHandler
+from src.presentation.bot.transport.bus_handler import BusHandler
+from src.presentation.bot.transport.tram_handler import TramHandler
+from src.presentation.bot.favorites_handler import FavoritesHandler
+from src.presentation.bot.settings.help_handler import HelpHandler
+from src.presentation.bot.settings.language_handler import LanguageHandler
+from src.presentation.bot.transport.web_app_handler import WebAppHandler
+from src.presentation.bot.transport.rodalies_handler import RodaliesHandler
+from src.presentation.bot.reply_handler import ReplyHandler
+from src.presentation.bot.admin_handler import AdminHandler
+from src.presentation.bot.settings.settings_handler import SettingsHandler
+from src.presentation.bot.transport.bicing_handler import BicingHandler
+from src.presentation.bot.settings.notifications_handler import NotificationsHandler
+from src.presentation.bot.transport.fgc_handler import FgcHandler
+from src.presentation.bot.keyboard_factory import KeyboardFactory 
+
+from src.application.services.transport.metro_service import MetroService
+from src.application.services.transport.bus_service import BusService
+from src.application.services.transport.tram_service import TramService
+from src.application.services.transport.rodalies_service import RodaliesService
+from src.application.services.transport.bicing_service import BicingService
+from src.application.services.transport.fgc_service import FgcService
+
+from src.application.services.message_service import MessageService
+from src.application.services.cache_service import CacheService
+from src.application.services.update_manager import UpdateManager
+from src.application.services.telegraph_service import TelegraphService
+from src.application.services.alerts_service import AlertsService
+from src.application.services.secrets_manager import SecretsManager
+from src.application.services.user_data_manager import UserDataManager
+
+from src.infrastructure.external.api.tmb_api_service import TmbApiService
+from src.infrastructure.external.api.tram_api_service import TramApiService
+from src.infrastructure.external.api.rodalies_api_service import RodaliesApiService
+from src.infrastructure.external.api.bicing_api_service import BicingApiService
+from src.infrastructure.external.api.fgc_api_service import FgcApiService
+
+from src.infrastructure.localization.language_manager import LanguageManager
+from src.infrastructure.database.database import init_db, reset_transport_data
+from src.infrastructure.external.firebase_client import initialize_firebase as initialize_firebase_app
+from src.infrastructure.database.seeders.seeder import seed_lines, seed_stations, seed_bicing, seed_alerts
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
+
+
+class BotApp:
+    """
+    BCN Transit Bot main application.
+    Initializes services, handlers, runs seeder, and starts Telegram polling.
+    """
+
+    def __init__(self):
+        self.scheduler = AsyncIOScheduler()
+
+        self.telegram_token = None
+        self.telegraph_token = None
+        self.bot = None
+        self.admin_id = None
+
+        # Services
+        self.language_manager = None
+        self.secrets_manager = None
+        self.message_service = None
+        self.telegraph_service = None
+        self.update_manager = None
+        self.user_data_manager = None
+        self.cache_service = None
+        self.keyboard_factory = None
+        self.alerts_service = None
+
+        # APIs
+        self.tmb_api_service = None
+        self.tram_api_service = None
+        self.rodalies_api_service = None
+        self.bicing_api_service = None
+        self.fgc_api_service = None
+
+        # Domain services
+        self.metro_service = None
+        self.bus_service = None
+        self.tram_service = None
+        self.rodalies_service = None
+        self.bicing_service = None
+        self.fgc_service = None
+
+        # Handlers
+        self.admin_handler = None        
+        self.menu_handler = None
+
+        self.metro_handler = None
+        self.bus_handler = None
+        self.tram_handler = None
+        self.rodalies_handler = None
+        self.bicing_handler = None
+        self.fgc_handler = None
+
+        self.favorites_handler = None
+        self.help_handler = None
+        self.language_handler = None
+        self.web_app_handler = None
+        self.reply_handler = None
+        self.notifications_handler = None
+
+        # Telegram app
+        self.application = None
+
+    def init_services(self):
+        """Initialize managers, APIs, domain services and handlers."""
+
+        logger.info("Initializing BCN Transit Bot services...")        
+        self.secrets_manager = SecretsManager()
+
+        # Load secrets
+        try:
+            self.telegram_token = self.secrets_manager.get('TELEGRAM_TOKEN')
+            self.bot = Bot(token=self.telegram_token)
+            self.telegraph_token = self.secrets_manager.get('TELEGRAPH_TOKEN')
+            tmb_app_id = self.secrets_manager.get('TMB_APP_ID')
+            tmb_app_key = self.secrets_manager.get('TMB_APP_KEY')
+            tram_client_id = self.secrets_manager.get('TRAM_CLIENT_ID')
+            tram_client_secret = self.secrets_manager.get('TRAM_CLIENT_SECRET')
+            self.admin_id = self.secrets_manager.get('ADMIN_ID')
+            logger.info("Secrets loaded successfully")
+        except Exception as e:
+            logger.critical(f"Error loading secrets: {e}")
+            raise
+
+        # Managers
+        self.language_manager = LanguageManager()
+        self.message_service = MessageService()
+        self.telegraph_service = TelegraphService(access_token=self.telegraph_token)
+        self.update_manager = UpdateManager(self.message_service)
+        self.user_data_manager = UserDataManager()
+        self.cache_service = CacheService()
+        self.keyboard_factory = KeyboardFactory(self.language_manager)
+        self.alerts_service = AlertsService(self.bot, self.message_service, self.user_data_manager)
+
+        # APIs
+        self.tmb_api_service = TmbApiService(app_id=tmb_app_id, app_key=tmb_app_key)
+        self.tram_api_service = TramApiService(client_id=tram_client_id, client_secret=tram_client_secret)
+        self.rodalies_api_service = RodaliesApiService()
+        self.bicing_api_service = BicingApiService()
+        self.fgc_api_service = FgcApiService()
+
+        # Domain services
+        self.metro_service = MetroService(self.tmb_api_service, self.language_manager, self.cache_service, self.user_data_manager)
+        self.bus_service = BusService(self.tmb_api_service, self.cache_service, self.user_data_manager, self.language_manager)
+        self.tram_service = TramService(self.tram_api_service, self.language_manager, self.cache_service, self.user_data_manager)
+        self.rodalies_service = RodaliesService(self.rodalies_api_service, self.language_manager, self.cache_service, self.user_data_manager)
+        self.bicing_service = BicingService(self.bicing_api_service)
+        self.fgc_service = FgcService(self.fgc_api_service, self.language_manager, self.cache_service, self.user_data_manager)
+
+        logger.info("Transport services initialized")
+
+        # Handlers
+        self.admin_handler = AdminHandler(self.bot, self.admin_id)
+        self.menu_handler = MenuHandler(self.keyboard_factory, self.message_service, self.user_data_manager, self.language_manager, self.update_manager)
+        self.metro_handler = MetroHandler(self.keyboard_factory, self.metro_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+        self.bus_handler = BusHandler(self.keyboard_factory, self.bus_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+        self.tram_handler = TramHandler(self.keyboard_factory, self.tram_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+        self.rodalies_handler = RodaliesHandler(self.keyboard_factory, self.rodalies_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+        self.bicing_handler = BicingHandler(self.keyboard_factory, self.bicing_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+        self.fgc_handler = FgcHandler(self.keyboard_factory, self.fgc_service, self.update_manager, self.user_data_manager, self.message_service, self.language_manager, self.telegraph_service)
+
+        self.favorites_handler = FavoritesHandler(self.message_service, self.user_data_manager, self.keyboard_factory, self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.bicing_service, self.fgc_service, self.language_manager)
+        self.help_handler = HelpHandler(self.message_service, self.keyboard_factory, self.language_manager, self.user_data_manager)
+        self.language_handler = LanguageHandler(self.keyboard_factory, self.user_data_manager, self.message_service, self.language_manager, self.update_manager)
+        self.web_app_handler = WebAppHandler(self.metro_handler, self.bus_handler, self.tram_handler, self.rodalies_handler, self.bicing_handler, self.fgc_handler)
+        self.settings_handler = SettingsHandler(self.message_service, self.keyboard_factory, self.language_manager)
+        self.notifications_handler = NotificationsHandler(self.message_service, self.keyboard_factory, self.language_manager, self.user_data_manager)
+        self.reply_handler = ReplyHandler(self.menu_handler, self.metro_handler, self.bus_handler, self.tram_handler, self.rodalies_handler, self.favorites_handler, self.language_handler, self.help_handler, self.settings_handler, self.bicing_handler, self.fgc_handler, self.notifications_handler)
+
+        logger.info("Handlers initialized")
+
+    async def run_seeder_job(self):
+        logger.info("🕐 Ejecutando tarea programada: SEEDER DIARIO...")
+        try:
+            await reset_transport_data()
+            await seed_lines(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+            await seed_stations(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+            await seed_bicing(self.bicing_service)
+            logger.info("✅ Seeder diario finalizado con éxito.")
+        except Exception as e:
+            logger.error(f"❌ Error en el seeder diario: {e}")
+
+    def register_handlers(self):
+        """Register Telegram handlers."""
+        self.application.add_handler(CommandHandler("start", self.menu_handler.show_menu))
+        self.application.add_handler(CallbackQueryHandler(self.menu_handler.show_menu, pattern=r"^menu$"))
+        self.application.add_handler(CallbackQueryHandler(self.menu_handler.back_to_menu, pattern=r"^back_to_menu"))
+        self.application.add_handler(CallbackQueryHandler(self.menu_handler.close_updates, pattern=r"^close_updates:"))
+        self.application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.web_app_handler.web_app_data_router))
+
+        # METRO
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_list, pattern=r"^metro_list"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_map, pattern=r"^metro_map"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_station, pattern=r"^metro_station"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_station_access, pattern=r"^metro_access"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_station_connections, pattern=r"^metro_connections"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.ask_search_method, pattern=r"^metro_line"))
+        self.application.add_handler(CallbackQueryHandler(self.metro_handler.show_list, pattern=r"^metro_page"))
+
+        # BUS
+        self.application.add_handler(CallbackQueryHandler(self.bus_handler.show_stop, pattern=r"^bus_station"))
+        self.application.add_handler(CallbackQueryHandler(self.bus_handler.show_line_stops, pattern=r"^bus_line"))
+        self.application.add_handler(CallbackQueryHandler(self.bus_handler.show_lines, pattern=r"^bus_category"))
+
+        # TRAM
+        self.application.add_handler(CallbackQueryHandler(self.tram_handler.show_list, pattern=r"^tram_list"))
+        self.application.add_handler(CallbackQueryHandler(self.tram_handler.show_map, pattern=r"^tram_map"))
+        self.application.add_handler(CallbackQueryHandler(self.tram_handler.show_stop, pattern=r"^tram_station"))
+        self.application.add_handler(CallbackQueryHandler(self.tram_handler.ask_search_method, pattern=r"^tram_line"))
+
+        # RODALIES
+        self.application.add_handler(CallbackQueryHandler(self.rodalies_handler.show_station, pattern=r"^rodalies_station"))
+        self.application.add_handler(CallbackQueryHandler(self.rodalies_handler.show_line_stops, pattern=r"^rodalies_line"))
+
+        # BICING
+        self.application.add_handler(CallbackQueryHandler(self.bicing_handler.show_station, pattern=r"^bicing_station"))
+
+        # FGC
+        self.application.add_handler(CallbackQueryHandler(self.fgc_handler.ask_search_method, pattern=r"^fgc_line"))
+        self.application.add_handler(CallbackQueryHandler(self.fgc_handler.show_map, pattern=r"^fgc_map"))
+        self.application.add_handler(CallbackQueryHandler(self.fgc_handler.show_list, pattern=r"^fgc_list"))
+        self.application.add_handler(CallbackQueryHandler(self.fgc_handler.show_station, pattern=r"^fgc_station"))
+
+        # FAVORITES
+        self.application.add_handler(CallbackQueryHandler(self.favorites_handler.add_favorite, pattern=r"^add_fav"))
+        self.application.add_handler(CallbackQueryHandler(self.favorites_handler.remove_favorite, pattern=r"^remove_fav"))
+
+        # SETTINGS
+        ### LANGUAGES 
+        self.application.add_handler(CallbackQueryHandler(self.language_handler.update_language, pattern=r"^set_language"))
+        ### NOTIFICATIONS
+        self.application.add_handler(CallbackQueryHandler(self.notifications_handler.update_user_configuration, pattern=r"^set_receive_notifications"))
+        ### HELP
+        self.application.add_handler(CommandHandler("help", self.help_handler.show_help))
+
+        # SEARCH
+        self.application.add_handler(MessageHandler(filters.LOCATION, self.reply_handler.location_handler))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.reply_handler.reply_router))
+
+        # ADMIN
+        self.application.add_handler(CommandHandler("commit", self.admin_handler.commit_command))
+        self.application.add_handler(CommandHandler("logs", self.admin_handler.tail_log_command))
+        self.application.add_handler(CommandHandler("uptime", self.admin_handler.uptime_command))
+        self.application.add_handler(CommandHandler("deploy", self.admin_handler.deploy))
+
+        logger.info("Handlers registered successfully")
+
+    async def run_daily_cycle(self):
+        logger.info("🔄 [CRON] Iniciando ciclo de actualización diario...")
+        
+        try:
+            logger.info("📥 [CRON] 1/2 Solicitando actualización GTFS...")
+            
+            if not AmbGtfsStore.is_loading:
+                asyncio.create_task(asyncio.to_thread(AmbGtfsStore.load_data))
+                
+            logger.info("⏳ [CRON] Esperando a que finalice el procesamiento GTFS...")
+            await AmbGtfsStore.loading_event.wait()
+
+            if not AmbGtfsStore.is_loaded:
+                logger.error("❌ [CRON] La actualización GTFS falló. Abortando Seeder.")
+                return
+
+            logger.info("🌱 [CRON] 2/2 Ejecutando Seeder en Base de Datos...")
+            await self.run_seeder_job()
+            
+            logger.info("✅ [CRON] Ciclo diario completado.")
+            
+        except Exception as e:
+            logger.error(f"❌ [CRON] Error en el ciclo diario: {e}")
+
+    async def run_realtime_updater(self):
+        try:
+            await asyncio.to_thread(AmbGtfsStore.update_realtime_feed)
+        except Exception as e:
+            logger.error(f"❌ [CRON RT] Error actualizando tiempo real: {e}")
+  
+    async def start_sync_alerts_loop(self):
+        def get_sleep_interval():
+            now = datetime.now()
+            hour = now.hour        
+            if (7 <= hour <= 9) or (17 <= hour <= 20):
+                return 180
+            
+            if 0 <= hour < 5:
+                return 3600
+                
+            return 600
+        while True:
+            try:
+                await seed_alerts(self.metro_service, self.bus_service, self.tram_service, self.rodalies_service, self.fgc_service)
+            except Exception as e:
+                logger.error(f"Error en loop: {e}")
+            
+            seconds = get_sleep_interval()
+            logger.info(f"💤 Durmiendo {seconds/60} minutos...")
+            await asyncio.sleep(seconds)
+
+    async def run(self):
+        """Main async entrypoint for the bot."""
+        await init_db()
+        initialize_firebase_app()
+
+        logger.info("⏳ Inicializando datos AMB en memoria...")
+        await AmbApiService.initialize()
+        await self.run_realtime_updater()
+        
+        await self.start_sync_alerts_loop()
+        await self.alerts_service.start()
+
+        logger.info("🚀 Forzando sincronización inicial de datos (Seeder)...")
+        #asyncio.create_task(self.run_seeder_job())
+
+        self.scheduler.add_job(
+            self.run_daily_cycle, 
+            trigger=CronTrigger(hour=4, minute=0),
+            id='daily_static_sync',
+            replace_existing=True
+        )
+
+        '''
+        self.scheduler.add_job(
+            self.run_realtime_updater,
+            trigger=IntervalTrigger(seconds=30),
+            id='realtime_bus_sync',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+
+        self.scheduler.add_job(
+            seed_bicing,
+            kwargs={'bicing_service': self.bicing_service},
+            trigger=IntervalTrigger(seconds=60),
+            id='realtime_bicing_sync',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+        '''
+        self.scheduler.start()
+
+        self.application = ApplicationBuilder().token(self.telegram_token).build()
+        self.register_handlers()
+
+        logger.info("Starting Telegram polling loop...")
+        
+        try:
+            #await self.application.initialize()
+            #await self.application.start()
+            #await self.admin_handler.send_commit_to_admins_on_startup()
+            #await self.application.updater.start_polling()
+            
+            logger.info("Creando tarea recurrente...")
+            
+
+            #logger.info("Bot is running. Press Ctrl+C to stop.")
+            await asyncio.Event().wait()
+            
+        except KeyboardInterrupt:
+            logger.info("Received interrupt signal, shutting down...")
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}")
+        finally:
+            # Cleanup
+            logger.info("Stopping bot...")
+
+            if self.scheduler.running:
+                self.scheduler.shutdown()
+
+            if self.alerts_service:
+                await self.alerts_service.stop()
+
+            #if self.application.updater.running:
+            #    await self.application.updater.stop()
+           # await self.application.stop()
+            #await self.application.shutdown()
+
+async def start_fastapi(app):
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        loop="uvloop",
+        log_level="info",
+        limit_concurrency=1000,
+        log_config=None,
+        timeout_keep_alive=5
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+async def start_bot_and_api():
+    bot = BotApp()
+    bot.init_services()
+
+    app = create_app(
+        metro_service=bot.metro_service,
+        bus_service=bot.bus_service,
+        tram_service=bot.tram_service,
+        rodalies_service=bot.rodalies_service,
+        bicing_service=bot.bicing_service,
+        fgc_service=bot.fgc_service,
+        user_data_manager=bot.user_data_manager,
+        lifespan=lifespan
+    )
+
+    await asyncio.gather(
+        bot.run(),
+        start_fastapi(app)
+    )
+
+# ONLY FOR TESTING
+def get_fastapi_app():
+    bot = BotApp()
+    bot.init_services()
+    
+    return create_app(
+        metro_service=bot.metro_service,
+        bus_service=bot.bus_service,
+        tram_service=bot.tram_service,
+        rodalies_service=bot.rodalies_service,
+        bicing_service=bot.bicing_service,
+        fgc_service=bot.fgc_service,
+        user_data_manager=bot.user_data_manager
+    )
+
+async def daily_gtfs_updater():
+    while True:
+        await asyncio.sleep(86400) 
+        logger.info("🔄 Ejecutando tarea programada de actualización GTFS...")
+        await asyncio.to_thread(AmbGtfsStore.load_data)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("🚀 Iniciando carga inicial de GTFS (esto puede tardar unos segundos)...")
+    await AmbApiService.initialize()    
+    task = asyncio.create_task(daily_gtfs_updater())
+    yield    
+    task.cancel()
+
+if __name__ == "__main__":
+    asyncio.run(start_bot_and_api())

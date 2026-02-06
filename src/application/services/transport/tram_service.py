@@ -45,6 +45,9 @@ class TramService(ServiceBase):
     async def sync_stations(self, valid_lines_filter):
         await super().sync_stations(TransportType.TRAM, valid_lines_filter)
 
+    async def sync_alerts(self):
+        await super().sync_alerts(TransportType.TRAM)
+
     async def fetch_lines(self) -> List[Line]:
         return await self.tram_api_service.get_lines()
 
@@ -94,8 +97,7 @@ class TramService(ServiceBase):
         return await super().get_station_by_code(stop_code, TransportType.TRAM)
     
     async def get_line_by_id(self, line_id: str) -> Optional[Line]:
-        lines = await self.get_all_lines()
-        return next((l for l in lines if str(l.code) == str(line_id) or l.id == line_id), None)
+        return await super().get_line_by_id(TransportType.TRAM, line_id)
 
     # =========================================================================
     # ⚡ MÉTODOS REAL-TIME / ESPECÍFICOS

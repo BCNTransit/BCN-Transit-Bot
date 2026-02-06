@@ -1,6 +1,7 @@
 from abc import abstractmethod
 import asyncio
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import datetime
 from typing import Callable, Any, Dict, List, Optional, Set, TypeVar
 import time
@@ -13,7 +14,7 @@ from src.domain.models.common.connections import Connections
 from src.infrastructure.database.repositories.stations_repository import StationsRepository
 from src.domain.models.common.station import Station
 from src.infrastructure.mappers.line_mapper import LineMapper
-from src.domain.schemas.models import DBLine, DBPhysicalStation, DBRouteStop
+from src.domain.schemas.models import DBAlert, DBLine, DBPhysicalStation, DBRouteStop
 from src.application.services.user_data_manager import UserDataManager
 from src.domain.models.common.alert import Alert
 from src.application.utils.utils import Utils
@@ -45,10 +46,7 @@ class ServiceBase:
 
         logger.info("🔄 Pre-loading lines cache for rich connections...")
         
-        # Obtenemos TODAS las líneas (bus, metro, tram...)
-        all_lines = await self.line_repository.get_all(transport_type=None)
-        
-        # CLAVE COMPUESTA: "metro-L1", "bus-V5", "bus-1"
+        all_lines = await self.line_repository.get_all(transport_type=None)        
         self._lines_metadata_cache = {
             f"{line.transport_type}-{line.code}": line 
             for line in all_lines
@@ -87,6 +85,45 @@ class ServiceBase:
         elapsed = time.perf_counter() - start
         logger.info(f"[{self.__class__.__name__}] get_all_lines -> {len(final_lines)} lines ({elapsed:.4f}s)")
         return final_lines
+
+    async def get_line_by_id(self, transport_type: TransportType, line_id: str) -> Line:
+        start = time.perf_counter()
+
+        if "-" in line_id:
+            try:
+                prefix = line_id.split("-")[0].lower()
+                id_transport_type = TransportType(prefix)
+                
+                if id_transport_type != transport_type:
+                    logger.error(
+                        f"⛔ Type Mismatch: Requested {transport_type} but Line ID belongs to {id_transport_type} ({line_id}). "
+                        "Returning empty list to enforce consistency."
+                    )
+                    return None
+                    
+            except ValueError:
+                return None
+        
+        db_line = await self.line_repository.get_by_id(line_id)
+
+        if not db_line:
+            return None
+        
+        line = Line.model_validate(db_line)
+        line.id = db_line.id
+
+        if not line.origin or not line.destination or line.origin == line.destination:
+            return None
+        
+        if db_line.extra_data and not getattr(line, 'category', None):
+            line.category = db_line.extra_data.get('category')
+
+        alerts_map = await self._get_alerts_map(transport_type)
+        self._enrich_with_alerts([line], alerts_map, key_attr="name")
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[{self.__class__.__name__}] get_line_by_id -> {line_id} - {transport_type} ({elapsed:.4f}s)")
+        return line
 
     async def get_stations_by_line_id(self, transport_type: TransportType, line_id: str) -> List[Station]:
         if "-" in line_id:
@@ -250,54 +287,45 @@ class ServiceBase:
         
         return station
 
-    async def get_stations_by_name(self, station_name: str, transport_type: TransportType = TransportType.METRO) -> List[Station]:
-        """
-        Obtiene estaciones FÍSICAS para el buscador o el mapa general.
-        """
+    async def get_stations_by_name(self, station_name: str, transport_type: TransportType) -> List[NearbyStation]:
         start = time.perf_counter()
-        cache_key = f"all_stations_{transport_type.value}"
+        cache_key = f"searchable_route_stops_{transport_type.value}"
 
-        # Función interna para buscar en DB y Mapear si no hay caché
         async def fetch_and_map():
-            # 1. Asegurar que tenemos metadatos de líneas para las conexiones
-            await self._ensure_lines_cache()
-
-            # 2. Obtener estaciones físicas únicas (DBPhysicalStation)
-            physical_models = await self.stations_repository.get_by_transport_type(transport_type.value)
+            route_stop_models = await self.stations_repository.get_route_stops_with_lines(transport_type.value)
             
-            # 3. Mapear a Dominio usando la caché de líneas
             return [
-                self._map_physical_to_domain(p_model, transport_type) 
-                for p_model in physical_models
+                self._map_route_stop_to_nearby_station(model) 
+                for model in route_stop_models
             ]
 
-        # Orquestación de Caché + API + Alertas
-        stations_task = self._get_from_cache_or_api(
+        all_stops = await self._get_from_cache_or_api(
             cache_key=cache_key,
             api_call=fetch_and_map,
-            cache_ttl=86400 # 24 horas (las paradas físicas no se mueven)
+            cache_ttl=86400 
         )
-        alerts_task = self._get_alerts_map(transport_type)
 
-        # Ejecución paralela
-        all_stations, alerts_dict = await asyncio.gather(stations_task, alerts_task)
-
-        # Filtrado (Buscador)
         if not station_name:
-            result = all_stations
+            result = all_stops
         else:
             result = self.fuzzy_search(
                 query=station_name, 
-                items=all_stations, 
-                key=lambda s: s.name, 
+                items=all_stops, 
+                key=lambda s: s.station_name, 
                 threshold=75
             )
 
-        # Enriquecimiento final con alertas en tiempo real
-        self._enrich_with_alerts(result, alerts_dict, key_attr="name")
-
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} matches ({elapsed:.4f}s)")
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} route_stops ({elapsed:.4f}s)")
+        
+        if station_name:
+            result.sort(
+                key=lambda x: (
+                    x.station_name, 
+                    x.lines[0].get('name', '') if (x.lines and len(x.lines) > 0) else ""
+                )
+            )
+            
         return result
 
     async def get_nearby_stations(self, lat: float, lon: float, radius: float, transport_type: TransportType = None, limit: int = 50) -> List[NearbyStation]:
@@ -583,7 +611,26 @@ class ServiceBase:
                 logger.error(f"❌ Error syncing stations: {e}")
                 await session.rollback()
                 raise e 
-            
+
+    async def sync_alerts(self, transport_type: TransportType):
+        await self.alerts_repository.mark_all_as_inactive(transport_type.value)
+        raw_alerts = await self.fetch_alerts()
+        logger.info(f"⏳ {len(raw_alerts)} {transport_type.value} alerts to be sync in DB.")
+
+        async def transform_alert(raw: Alert) -> DBAlert:
+            return DBAlert(
+                external_id=raw.id,                
+                transport_type=raw.transport_type.value if hasattr(raw.transport_type, 'value') else raw.transport_type,                
+                begin_date=raw.begin_date,
+                end_date=raw.end_date,
+                status=raw.status,
+                cause=raw.cause,                
+                publications=[asdict(pub) for pub in raw.publications],                
+                affected_entities=[asdict(entity) for entity in raw.affected_entities]
+            )
+    
+        await self._sync_batch(raw_alerts, transform_alert, self.alerts_repository, f"{transport_type.value} alerts")
+
     async def _sync_batch(self, raw_items: List[Any], transform_func: Callable[[Any], Any], repository: Any, label: str):
         batch_size = 500
         current_batch = []
@@ -624,28 +671,47 @@ class ServiceBase:
         }
 
     def _enrich_with_alerts(self, items: List[Any], alerts_map: Dict[str, List[Alert]], key_attr: str = "name"):
+    
+        normalized_map = {}
+        for key, alerts in alerts_map.items():
+            norm_key = key.strip().upper()
+            if norm_key not in normalized_map:
+                normalized_map[norm_key] = []
+            normalized_map[norm_key].extend(alerts)
+
         for item in items:
             item_alerts = []
             seen_ids = set()
             
-            is_station_item = hasattr(item, 'line_name') and item.line_name is not None
-
-            primary_key = getattr(item, key_attr, "")
-            if primary_key in alerts_map:
-                for alert in alerts_map[primary_key]:
+            raw_key = getattr(item, key_attr, "")
+            search_key = raw_key.strip().upper()
+            
+            if search_key in normalized_map:
+                for alert in normalized_map[search_key]:
                     if alert.id not in seen_ids:
                         item_alerts.append(alert)
                         seen_ids.add(alert.id)
             
-            if is_station_item:
-                line_key = item.line_name
-                if line_key in alerts_map:
-                    for alert in alerts_map[line_key]:
+            is_station = hasattr(item, 'line_name') and item.line_name
+            
+            if is_station:
+                raw_line_key = item.line_name
+                search_line_key = raw_line_key.strip().upper()
+                
+                if search_line_key != search_key and search_line_key in normalized_map:
+                    
+                    for alert in normalized_map[search_line_key]:
                         if alert.id in seen_ids:
                             continue
+
+                        targets_specific_stations = any(e.get("station_name") for e in alert.affected_entities)
                         
-                        targets_specific_stations = any(e.station_name for e in alert.affected_entities)
-                        targets_me = any(e.station_name == item.name for e in alert.affected_entities)
+                        item_name_norm = item.name.strip().upper()
+                        
+                        targets_me = any(
+                            (e.get("station_name") or "").strip().upper() == item_name_norm 
+                            for e in alert.affected_entities
+                        )
 
                         if targets_specific_stations and not targets_me:
                             continue
@@ -657,36 +723,56 @@ class ServiceBase:
             item.has_alerts = len(item_alerts) > 0
 
     async def _get_alerts_map(self, transport_type: TransportType) -> Dict[str, List[Alert]]:
-        cache_key = f"{transport_type.value}_alerts_map"
-        
+        cache_key = f"{transport_type.value}_alerts_map_db"
         cached = await self.cache_service.get(cache_key)
-        if cached: return cached
+        if cached: 
+            return cached
 
         try:
-            raw_alerts = await self.fetch_alerts()
-            if not raw_alerts:
+            db_alerts = await self.alerts_repository.get_active_alerts(transport_type.value)
+
+            if not db_alerts:
                 return {}
 
             result = defaultdict(list)
             
-            for alert in raw_alerts:
-                await self.user_data_manager.register_alert(transport_type, alert)
+            for alert_model in db_alerts:
+                alert = Alert(
+                    id=alert_model.id,
+                    transport_type=alert_model.transport_type,
+                    begin_date=alert_model.begin_date,
+                    end_date=alert_model.end_date,
+                    status=alert_model.status,
+                    cause=alert_model.cause,
+                    publications=alert_model.publications,
+                    affected_entities=alert_model.affected_entities
+                )
                 
-                entities = alert.affected_entities or []
-                
+                entities = alert.affected_entities or []                
+                mapped_keys = set()
+
                 for entity in entities:
-                    if entity.station_name:
-                         result[entity.station_name].append(alert)
-                         
-                    if entity.line_name:
-                         result[entity.line_name].append(alert)
-            
+                    station_name = entity.get("station_name")
+                    if station_name:
+                        k = station_name.strip().upper()
+                        if k not in mapped_keys:
+                            result[k].append(alert)
+                            mapped_keys.add(k)
+                            
+                    line_name = entity.get("line_name")
+                    if line_name:
+                        k = line_name.strip().upper()
+                        if k not in mapped_keys:
+                            result[k].append(alert)
+                            mapped_keys.add(k)
+
             alerts_dict = dict(result)
-            await self.cache_service.set(cache_key, alerts_dict, ttl=3600)
+
+            await self.cache_service.set(cache_key, alerts_dict, ttl=300)
             return alerts_dict
 
         except Exception as e:
-            logger.error(f"Error alerts map: {e}")
+            logger.error(f"Error building alerts map from DB: {e}", exc_info=True) # exc_info ayuda a ver el traceback completo
             return {}
 
     async def _get_from_cache_or_api(self, cache_key: str, api_call: Callable[[], Any], cache_ttl: int = 3600) -> Any:
@@ -782,6 +868,29 @@ class ServiceBase:
             has_alerts=False,
             alerts=[],
             connections=rich_connections
+        )
+    
+    def _map_route_stop_to_nearby_station(self, db_stop: DBRouteStop) -> NearbyStation:
+        phys = db_stop.station  
+        line = db_stop.line
+
+        return NearbyStation(
+            type=phys.transport_type,
+            station_name=phys.name,
+            physical_station_id=phys.id,
+            coordinates=(phys.latitude, phys.longitude),
+            distance_km=0.0,
+            
+            lines=[{
+                "id": line.id,
+                "name": line.name,
+                "color": line.color or "000000"
+            }],
+            
+            slots=None,
+            mechanical=None,
+            electrical=None,
+            availability=None
         )
 
     @abstractmethod

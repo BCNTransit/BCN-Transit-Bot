@@ -80,7 +80,7 @@ class Favorite(Base):
 # ----------------------------
 # DATOS DE SERVICIO (TMB/RODALIES)
 # ----------------------------
-class Alert(Base):
+class DBAlert(Base):
     __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True)
@@ -92,6 +92,7 @@ class Alert(Base):
     
     status = Column(String)
     cause = Column(String)
+    active = Column(Boolean, default=True, server_default="true")
     
     publications = Column(JSONB) 
     affected_entities = Column(JSONB)

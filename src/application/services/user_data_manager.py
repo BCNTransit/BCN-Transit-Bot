@@ -26,7 +26,7 @@ from src.domain.schemas.models import (
     DBUserSettings, 
     UserDevice as DBUserDevice,
     Favorite as DBFavorite, 
-    Alert as DBAlert, 
+    DBAlert, 
     AuditLog as DBAuditLog, 
     DBSearchHistory,
     UserSource,
@@ -618,60 +618,6 @@ class UserDataManager:
             )
             result = await session.execute(stmt)
             return result.scalars().all()
-
-
-    # ---------------------------
-    # ALERTS
-    # ---------------------------
-    async def register_alert(self, transport_type: TransportType, api_alert: Alert):
-        async with async_session_factory() as session:
-            stmt = select(DBAlert).where(
-                and_(
-                    DBAlert.external_id == str(api_alert.id),
-                    DBAlert.transport_type == transport_type.value
-                )
-            )
-            result = await session.execute(stmt)
-            if result.scalars().first(): return False
-
-            new_incident = DBAlert(
-                external_id=str(api_alert.id),
-                transport_type=transport_type.value,
-                begin_date=api_alert.begin_date,
-                end_date=api_alert.end_date,
-                status=api_alert.status,
-                cause=api_alert.cause,
-                publications=[pub.__dict__ for pub in api_alert.publications],
-                affected_entities=[ent.__dict__ for ent in api_alert.affected_entities]
-            )
-            session.add(new_incident)
-            await session.commit()
-            return True
-
-    async def get_alerts(self, only_active: bool = True) -> List[Alert]:
-        async with async_session_factory() as session:
-            stmt = select(DBAlert)
-            if only_active:
-                now = datetime.now()
-                stmt = stmt.where((DBAlert.end_date == None) | (DBAlert.end_date > now))
-            result = await session.execute(stmt)
-            db_alerts = result.scalars().all()
-
-            domain_alerts = []
-            for a in db_alerts:
-                pubs = [Publication(**p) for p in (a.publications or [])]
-                ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
-                domain_alerts.append(Alert(
-                    id=str(a.external_id),
-                    transport_type=TransportType(a.transport_type) if a.transport_type else None,
-                    begin_date=a.begin_date,
-                    end_date=a.end_date,
-                    status=a.status,
-                    cause=a.cause,
-                    publications=pubs,
-                    affected_entities=ents
-                ))
-            return domain_alerts
         
     async def has_notification_been_sent(self, user_id_db: str, alert_id: str) -> bool:
         if not user_id_db.isdigit():

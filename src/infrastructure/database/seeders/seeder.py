@@ -89,8 +89,33 @@ async def seed_stations(metro_service: MetroService, bus_service: BusService, tr
         else:
             logger.info(f"✅ {service_name} sincronizado.")
 
-    logger.info("✨ Proceso de Seeding finalizado.")
+    logger.info("✨ Proceso de Stations Seeding finalizado.")
 
+async def seed_alerts(metro_service: MetroService, bus_service: BusService, tram_service: TramService,
+                     rodalies_service: RodaliesService, fgc_service: FgcService):
+    logger.info("🚀 Iniciando Seeder de Alertas...")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    logger.info("📥 Sincronizando servicios en paralelo...")
+
+    results = await asyncio.gather(
+        metro_service.sync_alerts(),
+        bus_service.sync_alerts(),
+        rodalies_service.sync_alerts(),
+        tram_service.sync_alerts(),
+        fgc_service.sync_alerts(),
+        return_exceptions=True
+    )
+    
+    for service_name, result in zip(["Metro", "Bus", "Rodalies", "Tram", "FGC"], results):
+        if isinstance(result, Exception):
+            logger.error(f"❌ {service_name} falló: {result}")
+        else:
+            logger.info(f"✅ {service_name} sincronizado.")
+
+    logger.info("✨ Proceso de Alerts Seeding finalizado.")
     
 async def seed_bicing(bicing_service: BicingService):
     try:

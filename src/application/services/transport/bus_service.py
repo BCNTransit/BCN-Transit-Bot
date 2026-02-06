@@ -40,6 +40,9 @@ class BusService(ServiceBase):
     async def sync_stations(self, valid_lines_filter):
         await super().sync_stations(TransportType.BUS, valid_lines_filter)
 
+    async def sync_alerts(self):
+        await super().sync_alerts(TransportType.BUS)
+
     async def fetch_lines(self) -> List[Line]:
         tmb_lines, amb_lines = await asyncio.gather(
             self.tmb_api_service.get_bus_lines(),
@@ -88,7 +91,7 @@ class BusService(ServiceBase):
 
     async def fetch_alerts(self) -> List[Alert]:
         api_alerts = await self.tmb_api_service.get_global_alerts(TransportType.BUS)
-        return [Alert.map_from_metro_alert(a) for a in api_alerts]
+        return [Alert.map_from_bus_alert(a) for a in api_alerts]
 
     # =========================================================================
     # 🔍 MÉTODOS DE LECTURA (APP)
@@ -107,8 +110,7 @@ class BusService(ServiceBase):
         return await super().get_station_by_code(stop_code, TransportType.BUS)
 
     async def get_line_by_id(self, line_id: str) -> Optional[Line]:
-        lines = await self.get_all_lines()
-        return next((l for l in lines if str(l.code) == str(line_id)), None)
+        return await super().get_line_by_id(TransportType.BUS, line_id)
 
     async def get_lines_by_category(self, bus_category: str) -> List[Line]:
         start = time.perf_counter()

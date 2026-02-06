@@ -1,5 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from rapidfuzz import process, fuzz
+from typing import Any, Callable, List, Optional
+from src.application.utils.html_helper import HtmlHelper
 from src.infrastructure.external.api.bicing_api_service import BicingApiService
 from src.domain.schemas.models import DBBicingStation
 from src.domain.models.common.nearby_station import NearbyStation
@@ -41,7 +43,8 @@ class BicingService:
             logger.warning("⚠️ No valid Bicing data to sync.")
 
     async def get_all_stations(self) -> List[BicingStation]:
-        return await self.bicing_repository.get_all()
+        db_stations = await self.bicing_repository.get_all()
+        return [self._map_db_to_domain(s) for s in db_stations]
         
     async def get_nearby_stations(self, lat: float, lon: float, radius: float = 0.5, limit=50) -> List[NearbyStation]:
         """
@@ -81,17 +84,13 @@ class BicingService:
         
         if not station_name:
             return stations
-
-        # Implementación simple de búsqueda (o usa tu lógica de fuzzy anterior aquí)
-        # Opción A: Búsqueda simple (case insensitive)
-        query = station_name.lower()
-        return [
-            s for s in stations 
-            if query in (s.streetName or "").lower()
-        ]
-
-        # Opción B: Si quieres Fuzzy y tienes 'thefuzz' instalado:
-        # return self._fuzzy_search(station_name, stations)
+        
+        return self.fuzzy_search(
+                query=station_name, 
+                items=stations, 
+                key=lambda s: s.streetName, 
+                threshold=75
+            )
 
     async def get_station_by_id(self, station_id: str) -> Optional[BicingStation]:
         return await self.bicing_repository.get_by_id(station_id)
@@ -103,12 +102,20 @@ class BicingService:
             id=str(db_obj.id),
             type="bicing",
             streetName=db_obj.name,
+            streetNumber=getattr(db_obj, 'street_number', "S/N"),
             latitude=db_obj.latitude,
             longitude=db_obj.longitude,
             slots=db_obj.slots,
             mechanical_bikes=db_obj.mechanical_bikes,
             electrical_bikes=db_obj.electrical_bikes,
-            disponibilidad=1 if db_obj.availability == "OPN" else 0,
+            disponibilidad=db_obj.availability,
+            bikes=db_obj.mechanical_bikes + db_obj.electrical_bikes,
+            type_bicing="BIKE",
+            status=getattr(db_obj, 'status', "OPN"),
+            icon="",
+            transition_start=None,
+            transition_end=None,
+            obcn=None
         )
     
     def _map_domain_to_db(self, obj: BicingStation) -> DBBicingStation:
@@ -120,7 +127,7 @@ class BicingService:
             slots=obj.slots,
             mechanical_bikes=obj.mechanical_bikes,
             electrical_bikes=obj.electrical_bikes,
-            availability="OPN" if obj.disponibilidad > 0 else "CLS",            
+            availability=obj.disponibilidad,         
             last_updated=datetime.utcnow() 
         )
     
@@ -142,7 +149,19 @@ class BicingService:
         except (ValueError, TypeError):
             return 0
 
-    # Si necesitas la lógica fuzzy compleja que tenía ServiceBase, añádela aquí como helper privado
-    # def _fuzzy_search(self, query: str, items: List[BicingStation], threshold=75) -> List[BicingStation]:
-    #     from thefuzz import process
-    #     # ... tu lógica anterior ...
+    def fuzzy_search(self, query: str, items: List[BicingStation], key: Callable[[Any], str], threshold: float = 80) -> List[Any]:
+        query_lower = query.lower()
+        exact_matches = [item for item in items if query_lower in key(item).lower()]
+        remaining_items = [item for item in items if item not in exact_matches]
+        normalized_matches = [item for item in remaining_items if HtmlHelper.normalize_text(query_lower) in HtmlHelper.normalize_text(key(item).lower())]
+        remaining_items = [item for item in items if item not in (exact_matches + normalized_matches)]
+        item_dict = {key(item): item for item in remaining_items}
+        
+        fuzzy_matches = process.extract(
+            query=query,
+            choices=item_dict.keys(),
+            scorer=fuzz.WRatio
+        )
+
+        fuzzy_filtered = [item_dict[name] for name, score, _ in fuzzy_matches if score >= threshold]
+        return exact_matches + normalized_matches + fuzzy_filtered

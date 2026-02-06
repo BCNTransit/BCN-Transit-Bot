@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import List, Optional
 
+from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.metro.metro_access import MetroAccess
 from src.domain.models.common.alert import Alert
 from src.domain.models.common.station import Station
@@ -38,6 +39,9 @@ class MetroService(ServiceBase):
     async def sync_stations(self, valid_lines_filter):
         await super().sync_stations(TransportType.METRO, valid_lines_filter)
 
+    async def sync_alerts(self):
+        await super().sync_alerts(TransportType.METRO)
+
     async def fetch_lines(self) -> List[Line]:
         return await self.tmb_api_service.get_metro_lines()
     
@@ -66,11 +70,14 @@ class MetroService(ServiceBase):
 
     async def get_all_lines(self) -> List[Line]:
         return await super().get_all_lines(TransportType.METRO)
+    
+    async def get_line_by_id(self, line_id) -> List[Line]:
+        return await super().get_line_by_id(TransportType.METRO, line_id)
 
     async def get_stations_by_line_id(self, line_id: str) -> List[Station]:            
         return await super().get_stations_by_line_id(TransportType.METRO, line_id)
 
-    async def get_stations_by_name(self, station_name: str) -> List[Station]:
+    async def get_stations_by_name(self, station_name: str) -> List[NearbyStation]:
         return await super().get_stations_by_name(station_name, TransportType.METRO)
 
     async def get_station_by_code(self, station_code: str) -> Optional[Station]:
@@ -92,6 +99,12 @@ class MetroService(ServiceBase):
         start = time.perf_counter()
         cache_key = f"rt_{physical_station_id}_{line_id}"
 
+        await self._ensure_lines_cache()        
+        line_metadata = self._lines_metadata_cache.get(line_id)
+        if not line_metadata:
+            logger.warning(f"⚠️ Metadata not found for line_id: {line_id}")
+            return []
+
         cached_routes = await self.cache_service.get(cache_key)
         if cached_routes:
              return cached_routes
@@ -109,7 +122,14 @@ class MetroService(ServiceBase):
 
         if not any(r.next_trips for r in routes):
             logger.debug(f"Sin tiempo real para {external_code}, buscando horarios...")
-            routes = await self.tmb_api_service.get_next_scheduled_metro_at_station(external_code)
+            routes = await self.tmb_api_service.get_next_scheduled_metro_at_station(external_code, line_id)
+        
+        routes = [
+            r for r in routes 
+            if str(getattr(r, 'line_code', '')).upper() == str(line_metadata.code).upper()
+        ]
+
+        routes = list({r.route_id: r for r in routes}.values())
         
         if routes:
             await self.cache_service.set(cache_key, routes, ttl=15)

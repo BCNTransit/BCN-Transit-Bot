@@ -43,6 +43,9 @@ class RodaliesService(ServiceBase):
     async def sync_stations(self, valid_lines_filter):
         await super().sync_stations(TransportType.RODALIES, valid_lines_filter)
 
+    async def sync_alerts(self):
+        await super().sync_alerts(TransportType.RODALIES)
+
     async def fetch_lines(self) -> List[Line]:
         return await self.rodalies_api_service.get_lines()
 
@@ -92,8 +95,7 @@ class RodaliesService(ServiceBase):
         return await super().get_station_by_code(station_code, TransportType.RODALIES)
     
     async def get_line_by_id(self, line_id: str) -> Optional[Line]:
-        lines = await self.get_all_lines()
-        return next((l for l in lines if str(l.code) == str(line_id) or str(l.id) == str(line_id)), None)
+        return await super().get_line_by_id(TransportType.RODALIES, line_id)
 
     # =========================================================================
     # ⚡ MÉTODOS REAL-TIME

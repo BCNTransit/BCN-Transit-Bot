@@ -8,6 +8,7 @@ from fastapi.params import Body
 from pydantic import BaseModel, Field
 
 from firebase_admin import auth
+from src.domain.models.common.station import Station
 from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
 from src.domain.models.common.card import CardCreate, CardResponse, CardUpdate
@@ -64,7 +65,28 @@ def get_metro_router(
     async def list_metro_lines():
         return await metro_service.get_all_lines()
     
-    @router.get("/lines/{line_id}/stations")
+    @router.get("/lines/{line_id}", response_model=Line)
+    async def get_metro_line_by_id(line_id: str):
+        try:
+            line = await metro_service.get_line_by_id(line_id)
+            
+            if line is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Line with ID '{line_id}' not found"
+                )
+                
+            return line
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
+    
+    @router.get("/lines/{line_id}/stations", response_model=List[Station])
     async def list_metro_stations_by_line_id(line_id: str):
         return await metro_service.get_stations_by_line_id(line_id)
     
@@ -76,13 +98,10 @@ def get_metro_router(
     async def list_metro_station_routes(physical_station_id: str, line_id: str):
         return await metro_service.get_station_routes(physical_station_id, line_id)
     
-    @router.get("/stations/{station_code}/accesses")
-    async def get_metro_station_accesses(station_code: str):
-        station = await metro_service.get_station_by_code(station_code)
-        if station:
-            return await metro_service.get_station_accesses(station.station_group_code)
-        else:
-            return []
+    @router.get("/stations/{station_group_code}/accesses")
+    async def get_metro_station_accesses(station_group_code: str):
+        return await metro_service.get_station_accesses(station_group_code)
+
 
     return router
 
@@ -95,6 +114,27 @@ def get_bus_router(
     async def list_bus_lines():
         return await bus_service.get_all_lines()
     
+    @router.get("/lines/{line_id}", response_model=Line)
+    async def get_bus_line_by_id(line_id: str):
+        try:
+            line = await bus_service.get_line_by_id(line_id)
+            
+            if line is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Line with ID '{line_id}' not found"
+                )
+                
+            return line
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
+
     @router.get("/lines/{line_id}/stops")
     async def list_bus_stations_by_line(line_id: str):
         return await bus_service.get_stations_by_line_id(line_id)
@@ -122,6 +162,27 @@ def get_tram_router(
     async def list_tram_lines():
         return sorted(await tram_service.get_all_lines(), key=Utils.sort_lines)
     
+    @router.get("/lines/{line_id}", response_model=Line)
+    async def get_tram_line_by_id(line_id: str):
+        try:
+            line = await tram_service.get_line_by_id(line_id)
+            
+            if line is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Line with ID '{line_id}' not found"
+                )
+                
+            return line
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
+
     @router.get("/lines/{line_id}/stops")
     async def list_tram_stops_by_line(line_id: str):
         return await tram_service.get_stations_by_line_id(line_id)    
@@ -149,6 +210,27 @@ def get_rodalies_router(
     async def list_rodalies_lines():
         return sorted(await rodalies_service.get_all_lines(), key=Utils.sort_lines)
     
+    @router.get("/lines/{line_id}", response_model=Line)
+    async def get_rodalies_line_by_id(line_id: str):
+        try:
+            line = await rodalies_service.get_line_by_id(line_id)
+            
+            if line is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Line with ID '{line_id}' not found"
+                )
+                
+            return line
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
+
     @router.get("/lines/{line_id}/stations")
     async def list_rodalies_stations_by_line(line_id: str):
         return await rodalies_service.get_stations_by_line_id(line_id)
@@ -191,6 +273,27 @@ def get_fgc_router(
     async def list_fgc_lines():
         return sorted(await fgc_service.get_all_lines(), key=Utils.sort_lines)
     
+    @router.get("/lines/{line_id}", response_model=Line)
+    async def get_fgc_line_by_id(line_id: str):
+        try:
+            line = await fgc_service.get_line_by_id(line_id)
+            
+            if line is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Line with ID '{line_id}' not found"
+                )
+                
+            return line
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal server error: {str(e)}"
+            )
+
     @router.get("/lines/{line_id}/stations")
     async def list_fgc_stations_by_line(line_id: str):
         return await fgc_service.get_stations_by_line_id(line_id)    
@@ -232,7 +335,7 @@ def get_results_router(
         return transport + bicing
 
     @router.get("/search")
-    async def search_stations(name: str, uid: int = Depends(get_current_user_uid)):
+    async def search_stations(name: str, uid: int = Depends(get_current_user_uid)): 
         if uid:
              asyncio.create_task(
                  user_data_manager.register_search(
@@ -250,12 +353,7 @@ def get_results_router(
             bicing_service.get_stations_by_name(name),
         ]
         metro, bus, tram, fgc, rodalies, bicing = await asyncio.gather(*tasks)
-
-        search_results = DistanceHelper.build_stops_list(
-            stations=metro + bus + tram + fgc + rodalies,
-            bicing_stations=bicing
-        )
-        return search_results
+        return metro + bus + tram + fgc + rodalies + bicing
 
     @router.get("/search/history")
     async def search_history(uid: str = Depends(get_current_user_uid)):

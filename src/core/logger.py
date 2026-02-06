@@ -40,7 +40,11 @@ logger.propagate = False
 
 
 for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
-    uvicorn_logger = logging.getLogger(name)
-    uvicorn_logger.handlers = logger.handlers       # comparte handlers
-    uvicorn_logger.setLevel(logger.level)           # mismo nivel
-    uvicorn_logger.propagate = False
+    target_logger = logging.getLogger(name)
+    target_logger.handlers = [] 
+    
+    target_logger.addHandler(console_handler)
+    target_logger.addHandler(file_handler)
+    
+    target_logger.setLevel(logging.INFO)
+    target_logger.propagate = False
