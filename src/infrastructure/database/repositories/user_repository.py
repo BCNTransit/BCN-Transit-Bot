@@ -1,7 +1,7 @@
 from sqlalchemy import func, select, update, delete, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy import update as sql_update
-from src.domain.schemas.models import DBUser, DBUserCard, UserDevice, Favorite, DBUserSettings
+from src.domain.schemas.models import DBUser, DBUserCard, UserDevice, DBFavorite, DBUserSettings
 
 class UserRepository:
     def __init__(self, session_factory):
@@ -77,8 +77,8 @@ class UserRepository:
                 await session.execute(stmt_devices)
 
                 # 2. MOVER FAVORITOS (Lógica ORM)
-                stmt_source_favs = select(Favorite).where(Favorite.user_id == source_user_id)
-                stmt_target_favs = select(Favorite).where(Favorite.user_id == target_user_id)
+                stmt_source_favs = select(DBFavorite).where(DBFavorite.user_id == source_user_id)
+                stmt_target_favs = select(DBFavorite).where(DBFavorite.user_id == target_user_id)
                 
                 res_source = await session.execute(stmt_source_favs)
                 res_target = await session.execute(stmt_target_favs)

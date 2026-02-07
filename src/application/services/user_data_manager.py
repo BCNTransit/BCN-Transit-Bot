@@ -16,17 +16,17 @@ from src.domain.enums.clients import ClientType
 from src.domain.enums.transport_type import TransportType
 
 # Domain Models (El nuevo Pydantic Model)
-from src.domain.models.common.user import User 
-from src.domain.models.common.alert import Alert, AffectedEntity, Publication
+from src.domain.models.common.user import User
 
 # Database Models
 from src.domain.schemas.models import (
+    DBLine,
+    DBRouteStop,
     DBUser,
     DBUserCard,
     DBUserSettings, 
     UserDevice as DBUserDevice,
-    Favorite as DBFavorite, 
-    Alert as DBAlert, 
+    DBFavorite,
     AuditLog as DBAuditLog, 
     DBSearchHistory,
     UserSource,
@@ -252,10 +252,9 @@ class UserDataManager:
                     transport_type=type.lower(),
                     station_code=item.station_code,
                     station_name=item.station_name,
-                    station_group_code=item.station_group_code,
                     line_name=item.line_name,
-                    line_name_with_emoji=item.line_name_with_emoji,
-                    line_code=item.line_code,
+                    physical_station_id=item.physical_station_id,
+                    line_id=item.line_id,
                     latitude=lat,
                     longitude=lon
                 )
@@ -328,6 +327,32 @@ class UserDataManager:
                 fav_items,
                 key=lambda f: self.FAVORITE_TYPE_ORDER.get(f.type, 999)
             )
+        
+    async def migrate_favorites_data(self):
+        async with async_session_factory() as session:
+            stmt = select(DBFavorite).where(DBFavorite.physical_station_id == None)
+            result = await session.execute(stmt)
+            old_favorites = result.scalars().all()
+
+            for fav in old_favorites:
+                stmt_repair = (
+                    select(DBRouteStop)
+                    .join(DBRouteStop.line)
+                    .where(
+                        and_(
+                            DBRouteStop.station_external_code == fav.station_code,
+                            DBLine.name == fav.line_name
+                        )
+                    )
+                )
+                repair_result = await session.execute(stmt_repair)
+                route_stop = repair_result.scalars().first()
+
+                if route_stop:
+                    fav.physical_station_id = route_stop.physical_station_id
+                    fav.line_id = route_stop.line_id
+                    
+            await session.commit()
         
     async def check_favorite_exists(
         self,
@@ -569,11 +594,11 @@ class UserDataManager:
                 card_alert_hour=config.card_alert_hour
             )
 
-    async def update_user_settings(self, user_id: str, item: UserSettingsUpdate) -> bool:
+    async def update_user_settings(self, user_id: str, item: UserSettingsUpdate) -> Optional[DBUserSettings]:
         async with async_session_factory() as session:
             
             if not user_id: 
-                return False
+                return None
 
             stmt = select(DBUserSettings).where(DBUserSettings.user_id == user_id)
             result = await session.execute(stmt)
@@ -589,8 +614,9 @@ class UserDataManager:
                 setattr(db_settings, key, value)
                 
             await session.commit()
+            await session.refresh(db_settings)
 
-            return True
+            return db_settings
         
 
     # ---------------------------
@@ -618,60 +644,6 @@ class UserDataManager:
             )
             result = await session.execute(stmt)
             return result.scalars().all()
-
-
-    # ---------------------------
-    # ALERTS
-    # ---------------------------
-    async def register_alert(self, transport_type: TransportType, api_alert: Alert):
-        async with async_session_factory() as session:
-            stmt = select(DBAlert).where(
-                and_(
-                    DBAlert.external_id == str(api_alert.id),
-                    DBAlert.transport_type == transport_type.value
-                )
-            )
-            result = await session.execute(stmt)
-            if result.scalars().first(): return False
-
-            new_incident = DBAlert(
-                external_id=str(api_alert.id),
-                transport_type=transport_type.value,
-                begin_date=api_alert.begin_date,
-                end_date=api_alert.end_date,
-                status=api_alert.status,
-                cause=api_alert.cause,
-                publications=[pub.__dict__ for pub in api_alert.publications],
-                affected_entities=[ent.__dict__ for ent in api_alert.affected_entities]
-            )
-            session.add(new_incident)
-            await session.commit()
-            return True
-
-    async def get_alerts(self, only_active: bool = True) -> List[Alert]:
-        async with async_session_factory() as session:
-            stmt = select(DBAlert)
-            if only_active:
-                now = datetime.now()
-                stmt = stmt.where((DBAlert.end_date == None) | (DBAlert.end_date > now))
-            result = await session.execute(stmt)
-            db_alerts = result.scalars().all()
-
-            domain_alerts = []
-            for a in db_alerts:
-                pubs = [Publication(**p) for p in (a.publications or [])]
-                ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
-                domain_alerts.append(Alert(
-                    id=str(a.external_id),
-                    transport_type=TransportType(a.transport_type) if a.transport_type else None,
-                    begin_date=a.begin_date,
-                    end_date=a.end_date,
-                    status=a.status,
-                    cause=a.cause,
-                    publications=pubs,
-                    affected_entities=ents
-                ))
-            return domain_alerts
         
     async def has_notification_been_sent(self, user_id_db: str, alert_id: str) -> bool:
         if not user_id_db.isdigit():
@@ -758,15 +730,19 @@ class UserDataManager:
 
     def _to_domain_favorite(self, f: DBFavorite, user_id_ext: str) -> FavoriteResponse:
         return FavoriteResponse(
+            physical_station_id=f.physical_station_id or "",
+            line_id=f.line_id or "",
+            
             user_id=str(user_id_ext),
             type=f.transport_type,
             station_code=f.station_code,
             station_name=f.station_name,
-            station_group_code=f.station_group_code or "",
+            
             line_name=f.line_name or "",
-            line_name_with_emoji=f.line_name_with_emoji or "",
             line_code=f.line_code or "",
-            coordinates=[f.latitude or 0, f.longitude or 0],
+            
+            coordinates=[f.latitude if f.latitude is not None else 0.0, 
+                        f.longitude if f.longitude is not None else 0.0],
             alias=f.alias
         )
     

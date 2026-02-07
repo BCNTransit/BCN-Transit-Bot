@@ -78,25 +78,31 @@ class RodaliesApiService:
 
     # ==== Stations ====
     async def get_next_trains_at_station(self, station_id: int) -> List[LineRoute]:
-        """Fetch all stations for a given line."""
-        next_rodalies = await self._request("GET", f"/departures?stationId={station_id}&minute=90&fullResponse=true&lang=ca")
+        next_rodalies = await self._request("GET", f"/departures?stationId={station_id}&minute=90&fullResponse=true&lang=ca")        
         
-        # Definimos la zona horaria una vez
         madrid_tz = ZoneInfo("Europe/Madrid")
         
+        if "trains" not in next_rodalies:
+            return []
+        
         routes_dict = {}
+        
         for item in next_rodalies["trains"]:
             line = item["line"]
-            key = (line["name"], line["id"], item["destinationStation"]["name"])
+            api_line_name = line.get("name", "").upper()
+            if not api_line_name:
+                continue
 
-            dt_naive = datetime.fromisoformat(item["departureDateHourSelectedStation"])            
+            key = (api_line_name, line["id"], item["destinationStation"]["name"])
+
+            dt_naive = datetime.fromisoformat(item["departureDateHourSelectedStation"])
             dt_aware = dt_naive.replace(tzinfo=madrid_tz)
             utc_timestamp = dt_aware.timestamp()
 
             if utc_timestamp < datetime.now(tz=madrid_tz).timestamp():
                 continue
             
-            next_rodalies = NextTrip(
+            next_trip = NextTrip(
                     id=item["technicalNumber"],
                     arrival_time=normalize_to_seconds(utc_timestamp), 
                     platform=item["platformSelectedStation"],
@@ -105,17 +111,17 @@ class RodaliesApiService:
             
             if key not in routes_dict:
                 routes_dict[key] = LineRoute(
-                    route_id=line["id"],
-                    line_name=line["name"],
-                    line_id=line["id"],
+                    route_id=item["commercialNumber"],
+                    line_name=api_line_name,
+                    line_id=api_line_name, 
                     line_code=line["id"],
                     destination=item["destinationStation"]["name"],
-                    next_trips=[next_rodalies],
+                    next_trips=[next_trip],
                     color=None,
                     line_type=TransportType.RODALIES
                 )
             else:
-                routes_dict[key].next_trips.append(next_rodalies)
+                routes_dict[key].next_trips.append(next_trip)
 
         return list(routes_dict.values())
         

@@ -7,26 +7,24 @@ import asyncio
 import html
 import os
 
-from telegram import Bot
 from firebase_admin import messaging
 
-from src.domain.models.common.alert import Alert
+from src.domain.enums.transport_type import TransportType
+from src.infrastructure.database.repositories.alerts_repository import AlertsRepository
+from src.domain.models.common.alert import AffectedEntity, Alert, Publication
 from src.domain.models.common.user import User
 from src.domain.schemas.favorite import FavoriteResponse
 from src.application.services.user_data_manager import UserDataManager
+from src.infrastructure.database.database import async_session_factory
 from src.core.logger import logger
 
-if TYPE_CHECKING:
-    from src.application.services.message_service import MessageService
-
 class AlertsService:
-    def __init__(self, bot: Bot, message_service: MessageService, user_data_manager: UserDataManager, interval: int = 300):
-        self.bot = bot
-        self.message_service = message_service
+    def __init__(self, user_data_manager: UserDataManager, interval: int = 300):
         self.user_data_manager = user_data_manager
         
         env_interval = os.getenv("ALERTS_SERVICE_INTERVAL")
         self.interval = int(env_interval) if env_interval else interval
+        self.alerts_repository = AlertsRepository(async_session_factory)
         
         self._running = False
         self._task = None
@@ -159,26 +157,39 @@ class AlertsService:
             logger.error(f"❌ Error checking card expirations: {e}")
 
     async def check_new_alerts(self):
-        """Lógica de incidencias de transporte con filtrado de spam y optimización."""
         try:
-            all_alerts = await self.user_data_manager.get_alerts(only_active=True)
-            if not all_alerts: 
+            db_alerts = await self.alerts_repository.get_active_alerts()
+            if not db_alerts:
                 return
-            
+
+            active_recent_alerts: List[Alert] = []
             now = datetime.now()
             relevance_threshold = now - timedelta(hours=24)
-            
-            active_recent_alerts = [
-                a for a in all_alerts 
-                if not a.begin_date or a.begin_date >= relevance_threshold
-            ]
+
+            for a in db_alerts:
+                if a.begin_date and a.begin_date < relevance_threshold:
+                    continue
+
+                pubs = [Publication(**p) for p in (a.publications or [])]
+                ents = [AffectedEntity(**e) for e in (a.affected_entities or [])]
+                
+                active_recent_alerts.append(Alert(
+                    id=str(a.external_id),
+                    transport_type=TransportType(a.transport_type) if a.transport_type else None,
+                    begin_date=a.begin_date,
+                    end_date=a.end_date,
+                    status=a.status,
+                    cause=a.cause,
+                    publications=pubs,
+                    affected_entities=ents
+                ))
 
             if not active_recent_alerts:
-                logger.info("ℹ️ Todas las alertas activas son antiguas (>24h). No se enviarán nuevas push.")
+                logger.info("ℹ️ No hay alertas recientes para notificar.")
                 return
 
             users_data = await self.user_data_manager.get_active_users_with_favorites()
-            if not users_data: 
+            if not users_data:
                 return
 
             logger.info(f"🔎 Checking {len(active_recent_alerts)} recent alerts for {len(users_data)} users...")
@@ -186,7 +197,7 @@ class AlertsService:
             tasks = []
             for user, favorites in users_data:
                 notifications_enabled = user.settings.general_notifications_enabled if user.settings else True
-                if not notifications_enabled: 
+                if not notifications_enabled:
                     continue
 
                 for alert in active_recent_alerts:

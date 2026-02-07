@@ -104,7 +104,7 @@ class TmbApiService:
         stations.sort(key=lambda x: x.order)
         return stations
 
-    async def get_next_metro_at_station(self, station_id) -> List[LineRoute]:
+    async def get_next_metro_at_station(self, station_id, line_id) -> List[LineRoute]:
         url = f'{self.BASE_URL_ITRANSIT}/metro/estacions?estacions={station_id}'
         data = await self._get(url)
 
@@ -118,7 +118,7 @@ class TmbApiService:
                         ) for metro in route_data.get("propers_trens", [])
                     ]
                     route = LineRoute(
-                        line_id=route_data["codi_linia"],
+                        line_id=line_id,
                         line_code=route_data["codi_linia"],
                         line_name=route_data["nom_linia"],
                         color=route_data["color_linia"],
@@ -130,7 +130,7 @@ class TmbApiService:
                     routes.append(route)
         return routes
     
-    async def get_next_scheduled_metro_at_station(self, station_id) -> List[LineRoute]:
+    async def get_next_scheduled_metro_at_station(self, station_id, line_id) -> List[LineRoute]:
         url = (
             f'{self.BASE_URL_TRANSIT}/core/horaris/?'
             f'transit_namespace_element=metro&codi_element={station_id}&transit_namespace=metro'
@@ -166,7 +166,7 @@ class TmbApiService:
             # Si hay trips futuros, crear un solo LineRoute por feature
             if next_trips:
                 route = LineRoute(
-                    line_id=properties.get("ID_LINIA"),
+                    line_id=line_id,
                     line_code=properties.get("CODI_LINIA"),
                     line_name=properties.get("NOM_LINIA"),
                     color="",

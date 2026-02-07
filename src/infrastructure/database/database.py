@@ -21,10 +21,12 @@ elif DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(
-    DATABASE_URL,
-    poolclass=NullPool,
+    DATABASE_URL,    
+    pool_size=5,
+    max_overflow=10,    
     echo=False,
-    pool_pre_ping=True
+    pool_pre_ping=True,    
+    pool_recycle=1800
 )
 
 async_session_factory = async_sessionmaker(
@@ -50,17 +52,29 @@ async def init_db():
 
 async def reset_transport_data():
     """
-    Limpia las tablas de líneas y estaciones para asegurar una carga limpia.
-    Usa TRUNCATE CASCADE para borrar datos y reiniciar IDs.
+    Limpia TODAS las tablas de la nueva arquitectura de transporte.
+    Borra: 
+    1. Lines (Servicios)
+    2. Physical Stations (Infraestructura)
+    3. Route Stops (Relaciones/Rutas)
     """
-    logger.info("🧹 Limpiando base de datos (Lines & Stations)...")
+    logger.info("🧹 Limpiando base de datos completa (Lines, Physical & Routes)...")
     
     async with async_session_factory() as session:
         try:
-            await session.execute(text("TRUNCATE TABLE stations, lines RESTART IDENTITY CASCADE;"))
+            await session.execute(text("""
+                TRUNCATE TABLE 
+                    physical_stations, 
+                    lines, 
+                    route_stops,
+                    bicing_stations
+                RESTART IDENTITY CASCADE;
+            """))
             
             await session.commit()
-            logger.info("✨ Tablas limpias.")
+            logger.info("✨ Base de datos impoluta. Tablas vacías y contadores a cero.")
+            
         except Exception as e:
             logger.error(f"❌ Error limpiando tablas: {e}")
             await session.rollback()
+            raise e
