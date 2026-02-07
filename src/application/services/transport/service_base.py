@@ -8,6 +8,7 @@ import time
 
 from rapidfuzz import process, fuzz
 
+from src.domain.models.common.search_result import StationSearchResult
 from src.infrastructure.database.repositories.alerts_repository import AlertsRepository
 from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.connections import Connections
@@ -179,7 +180,8 @@ class ServiceBase:
                 description=physical.description,
                 
                 # Contexto
-                line_code='',
+                line_id=getattr(route_stop.line, 'id', ''),
+                line_code=getattr(route_stop.line, 'code', ''),
                 line_name=getattr(route_stop.line, 'name', ''),
                 
                 # Extra Data
@@ -287,15 +289,27 @@ class ServiceBase:
         
         return station
 
-    async def get_stations_by_name(self, station_name: str, transport_type: TransportType) -> List[NearbyStation]:
+    async def get_stations_by_name(self, station_name: str, transport_type: TransportType) -> List[StationSearchResult]:
         start = time.perf_counter()
         cache_key = f"searchable_route_stops_{transport_type.value}"
 
         async def fetch_and_map():
             route_stop_models = await self.stations_repository.get_route_stops_with_lines(transport_type.value)
             
+            if transport_type == TransportType.BUS:
+                unique_stations = {}
+                
+                for model in route_stop_models:
+                    phys_id = model.station.id 
+                    
+                    if phys_id not in unique_stations:
+                        mapped_item = self._map_route_stop_to_station_search_result(model)
+                        unique_stations[phys_id] = mapped_item
+                
+                return list(unique_stations.values())
+            
             return [
-                self._map_route_stop_to_nearby_station(model) 
+                self._map_route_stop_to_station_search_result(model) 
                 for model in route_stop_models
             ]
 
@@ -306,9 +320,9 @@ class ServiceBase:
         )
 
         if not station_name:
-            result = all_stops
+            results = all_stops
         else:
-            result = self.fuzzy_search(
+            results = self.fuzzy_search(
                 query=station_name, 
                 items=all_stops, 
                 key=lambda s: s.station_name, 
@@ -316,17 +330,9 @@ class ServiceBase:
             )
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(result)} route_stops ({elapsed:.4f}s)")
-        
-        if station_name:
-            result.sort(
-                key=lambda x: (
-                    x.station_name, 
-                    x.lines[0].get('name', '') if (x.lines and len(x.lines) > 0) else ""
-                )
-            )
+        logger.info(f"[{self.__class__.__name__}] get_stations_by_name('{station_name}') -> {len(results)} route_stops ({elapsed:.4f}s)")
             
-        return result
+        return results
 
     async def get_nearby_stations(self, lat: float, lon: float, radius: float, transport_type: TransportType = None, limit: int = 50) -> List[NearbyStation]:
         start = time.perf_counter()
@@ -869,28 +875,25 @@ class ServiceBase:
             alerts=[],
             connections=rich_connections
         )
-    
-    def _map_route_stop_to_nearby_station(self, db_stop: DBRouteStop) -> NearbyStation:
+    def _map_route_stop_to_station_search_result(self, db_stop: DBRouteStop) -> StationSearchResult:    
         phys = db_stop.station  
         line = db_stop.line
 
-        return NearbyStation(
-            type=phys.transport_type,
-            station_name=phys.name,
+        return StationSearchResult(
             physical_station_id=phys.id,
+            station_external_code=db_stop.station_external_code,
+            line_id=line.id,
+            
+            station_name=phys.name,
+            line_name=line.name,
+            line_color=line.color or "#000000",
+            line_destination=line.destination,
+            
+            type=phys.transport_type,
+            match_score=0.0,
+            
             coordinates=(phys.latitude, phys.longitude),
-            distance_km=0.0,
-            
-            lines=[{
-                "id": line.id,
-                "name": line.name,
-                "color": line.color or "000000"
-            }],
-            
-            slots=None,
-            mechanical=None,
-            electrical=None,
-            availability=None
+            has_alerts=False
         )
 
     @abstractmethod
@@ -915,19 +918,47 @@ class ServiceBase:
             return result
         return wrapper
 
-    def fuzzy_search(self, query: str, items: List[Any], key: Callable[[Any], str], threshold: float = 80) -> List[Any]:
+    def fuzzy_search(self, query: str, items: List[StationSearchResult], key: Callable[[Any], str], threshold: float = 75) -> List[StationSearchResult]:
         query_lower = query.lower()
-        exact_matches = [item for item in items if query_lower in key(item).lower()]
-        remaining_items = [item for item in items if item not in exact_matches]
-        normalized_matches = [item for item in remaining_items if HtmlHelper.normalize_text(query_lower) in HtmlHelper.normalize_text(key(item).lower())]
-        remaining_items = [item for item in items if item not in (exact_matches + normalized_matches)]
+        query_norm = HtmlHelper.normalize_text(query_lower)
+
+        # 1. Exact Matches (Puntuación máxima)
+        exact_matches = []
+        for item in items:
+            if query_lower in key(item).lower():
+                item.match_score = 100.0
+                exact_matches.append(item)
+
+        # 2. Normalized Matches (Puntuación alta, pero menor que exacta)
+        # Excluimos lo que ya encontramos en exact_matches
+        remaining_after_exact = [item for item in items if item not in exact_matches]
+        normalized_matches = []
+        for item in remaining_after_exact:
+            if query_norm in HtmlHelper.normalize_text(key(item).lower()):
+                item.match_score = 95.0
+                normalized_matches.append(item)
+
+        # 3. Fuzzy Matches (Puntuación real de la librería)
+        # Solo procesamos lo que no ha coincidido con los métodos anteriores
+        all_found = exact_matches + normalized_matches
+        remaining_items = [item for item in items if item not in all_found]
+        
+        # Creamos un mapa para recuperar el objeto por su nombre/key
         item_dict = {key(item): item for item in remaining_items}
         
-        fuzzy_matches = process.extract(
+        fuzzy_results = process.extract(
             query=query,
             choices=item_dict.keys(),
-            scorer=fuzz.WRatio
+            scorer=fuzz.WRatio,
+            limit=20 # Limitamos para no procesar miles de resultados irrelevantes
         )
 
-        fuzzy_filtered = [item_dict[name] for name, score, _ in fuzzy_matches if score >= threshold]
+        fuzzy_filtered = []
+        for name, score, _ in fuzzy_results:
+            if score >= threshold:
+                item = item_dict[name]
+                item.match_score = float(score)
+                fuzzy_filtered.append(item)
+
+        # Devolvemos todo combinado
         return exact_matches + normalized_matches + fuzzy_filtered

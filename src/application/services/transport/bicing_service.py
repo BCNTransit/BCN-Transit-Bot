@@ -1,6 +1,7 @@
 from datetime import datetime
 from rapidfuzz import process, fuzz
 from typing import Any, Callable, List, Optional
+from src.domain.models.common.search_result import StationSearchResult
 from src.application.utils.html_helper import HtmlHelper
 from src.infrastructure.external.api.bicing_api_service import BicingApiService
 from src.domain.schemas.models import DBBicingStation
@@ -76,24 +77,30 @@ class BicingService:
             
         return nearby_list
 
-    async def get_stations_by_name(self, station_name: str) -> List[BicingStation]:
-        """
-        Búsqueda por nombre de calle.
-        """
-        stations = await self.get_all_stations()
+    async def get_stations_by_name(self, station_name: str) -> List[StationSearchResult]:
+        db_stations = await self.bicing_repository.get_all()
         
         if not station_name:
-            return stations
+            return db_stations
+        
+        db_stations = await self.bicing_repository.get_all()
+        
+        stations = [
+            self._map_db_bicing_to_station_search_result(db_station) 
+            for db_station in db_stations
+        ]
         
         return self.fuzzy_search(
                 query=station_name, 
                 items=stations, 
-                key=lambda s: s.streetName, 
+                key=lambda s: s.station_name, 
                 threshold=75
             )
 
     async def get_station_by_id(self, station_id: str) -> Optional[BicingStation]:
-        return await self.bicing_repository.get_by_id(station_id)
+        id = station_id.split("-")[1] if "-" in station_id else station_id
+        station = await self.bicing_repository.get_by_id(id)
+        return self._map_db_to_domain(station)
 
     # --- HELPERS ---
 
@@ -110,12 +117,32 @@ class BicingService:
             electrical_bikes=db_obj.electrical_bikes,
             disponibilidad=db_obj.availability,
             bikes=db_obj.mechanical_bikes + db_obj.electrical_bikes,
-            type_bicing="BIKE",
-            status=getattr(db_obj, 'status', "OPN"),
+            type_bicing=1,
+            status=getattr(db_obj, 'status', 1),
             icon="",
             transition_start=None,
             transition_end=None,
             obcn=None
+        )
+    
+    def _map_db_bicing_to_station_search_result(self, db_obj: DBBicingStation) -> StationSearchResult:
+        total_bikes = (db_obj.mechanical_bikes or 0) + (db_obj.electrical_bikes or 0)
+
+        return StationSearchResult(
+            physical_station_id=f"bicing-{str(db_obj.id)}",
+            station_external_code=str(db_obj.id),
+            line_id="bicing",
+            
+            station_name=db_obj.name,
+            line_name="Bicing",
+            line_color="#FF0000",
+            line_destination=f"Bicis: {total_bikes} | Huecos: {db_obj.slots}",
+            
+            type="BICING",
+            match_score=0.0,
+            
+            coordinates=(db_obj.latitude, db_obj.longitude),
+            has_alerts=(total_bikes == 0 and db_obj.slots == 0)
         )
     
     def _map_domain_to_db(self, obj: BicingStation) -> DBBicingStation:
@@ -149,19 +176,47 @@ class BicingService:
         except (ValueError, TypeError):
             return 0
 
-    def fuzzy_search(self, query: str, items: List[BicingStation], key: Callable[[Any], str], threshold: float = 80) -> List[Any]:
+    def fuzzy_search(self, query: str, items: List[StationSearchResult], key: Callable[[Any], str], threshold: float = 75) -> List[StationSearchResult]:
         query_lower = query.lower()
-        exact_matches = [item for item in items if query_lower in key(item).lower()]
-        remaining_items = [item for item in items if item not in exact_matches]
-        normalized_matches = [item for item in remaining_items if HtmlHelper.normalize_text(query_lower) in HtmlHelper.normalize_text(key(item).lower())]
-        remaining_items = [item for item in items if item not in (exact_matches + normalized_matches)]
+        query_norm = HtmlHelper.normalize_text(query_lower)
+
+        # 1. Exact Matches (Puntuación máxima)
+        exact_matches = []
+        for item in items:
+            if query_lower in key(item).lower():
+                item.match_score = 100.0
+                exact_matches.append(item)
+
+        # 2. Normalized Matches (Puntuación alta, pero menor que exacta)
+        # Excluimos lo que ya encontramos en exact_matches
+        remaining_after_exact = [item for item in items if item not in exact_matches]
+        normalized_matches = []
+        for item in remaining_after_exact:
+            if query_norm in HtmlHelper.normalize_text(key(item).lower()):
+                item.match_score = 95.0
+                normalized_matches.append(item)
+
+        # 3. Fuzzy Matches (Puntuación real de la librería)
+        # Solo procesamos lo que no ha coincidido con los métodos anteriores
+        all_found = exact_matches + normalized_matches
+        remaining_items = [item for item in items if item not in all_found]
+        
+        # Creamos un mapa para recuperar el objeto por su nombre/key
         item_dict = {key(item): item for item in remaining_items}
         
-        fuzzy_matches = process.extract(
+        fuzzy_results = process.extract(
             query=query,
             choices=item_dict.keys(),
-            scorer=fuzz.WRatio
+            scorer=fuzz.WRatio,
+            limit=20 # Limitamos para no procesar miles de resultados irrelevantes
         )
 
-        fuzzy_filtered = [item_dict[name] for name, score, _ in fuzzy_matches if score >= threshold]
+        fuzzy_filtered = []
+        for name, score, _ in fuzzy_results:
+            if score >= threshold:
+                item = item_dict[name]
+                item.match_score = float(score)
+                fuzzy_filtered.append(item)
+
+        # Devolvemos todo combinado
         return exact_matches + normalized_matches + fuzzy_filtered

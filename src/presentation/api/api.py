@@ -8,6 +8,8 @@ from fastapi.params import Body
 from pydantic import BaseModel, Field
 
 from firebase_admin import auth
+from src.application.services.app_version_service import AppVersionService
+from src.domain.schemas.update import AppVersionResponse
 from src.domain.models.common.station import Station
 from src.domain.models.common.nearby_station import NearbyStation
 from src.domain.models.common.user_settings import UserSettingsResponse, UserSettingsUpdate
@@ -312,7 +314,6 @@ def get_fgc_router(
 
     return router
 
-
 def get_results_router(
     metro_service: MetroService,
     bus_service: BusService,
@@ -353,7 +354,9 @@ def get_results_router(
             bicing_service.get_stations_by_name(name),
         ]
         metro, bus, tram, fgc, rodalies, bicing = await asyncio.gather(*tasks)
-        return metro + bus + tram + fgc + rodalies + bicing
+        all_results = metro + bus + tram + fgc + rodalies + bicing
+        all_results.sort(key=lambda x: (-x.match_score, x.station_name))
+        return all_results
 
     @router.get("/search/history")
     async def search_history(uid: str = Depends(get_current_user_uid)):
@@ -516,7 +519,7 @@ def get_user_router(
             "message": "Logged out successfully. Device unlinked."
         }
 
-    @router.patch("/settings", response_model=bool)
+    @router.patch("/settings", response_model=UserSettingsResponse)
     async def update_settings(
         settings_update: UserSettingsUpdate,
         uid: int = Depends(get_current_user_uid)
@@ -619,5 +622,20 @@ def get_user_router(
         uid: int = Depends(get_current_user_uid)
     ):
         return await user_data_manager.remove_user_card(uid, card_id)
+
+    return router
+
+
+def get_config_router(
+    app_version_service: AppVersionService
+) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/check-update", response_model=AppVersionResponse)
+    async def check_app_update(
+        version_code: int = Query(..., description="El versionCode de la app (ej: 1002005)"),
+        platform: str = Query("android", description="android o ios")
+    ):  
+        return await app_version_service.check_update_status(platform=platform, version_code=version_code)
 
     return router

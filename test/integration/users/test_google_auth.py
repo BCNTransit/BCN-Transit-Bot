@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from src.infrastructure.database.database_helper import DatabaseHelper
-from src.domain.schemas.models import DBUser, DBUserCard, DBUserSettings, Favorite, UserDevice
+from src.domain.schemas.models import DBUser, DBUserCard, DBUserSettings, DBFavorite, UserDevice
 from src.infrastructure.database.database import async_session_factory
 
 ENDPOINT = "/api/users/auth/google"
@@ -28,7 +28,7 @@ async def test_google_login_scenario_1_merge(client, mock_firebase_auth):
         anon_id = anon_user.id
         
         # Le añadimos un Favorito al anónimo para probar que se mueve
-        fav = Favorite(
+        fav = DBFavorite(
             user_id=anon_id, 
             station_code="TEST_STATION", 
             transport_type="metro",
@@ -158,7 +158,7 @@ async def test_google_login_scenario_3_promotion(client, mock_firebase_auth):
         anon_user = await DatabaseHelper.insert_anonymous_user(session, install_id)
         anon_id = anon_user.id
 
-        fav = Favorite(
+        fav = DBFavorite(
             user_id=anon_id, 
             station_code="TEST_STATION", 
             transport_type="metro",

@@ -30,7 +30,7 @@ class DBUser(Base):
     settings = relationship("DBUserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="joined")
     
     devices = relationship("UserDevice", back_populates="user", cascade="all, delete-orphan")
-    favorites = relationship("Favorite", back_populates="user", cascade="all, delete-orphan")
+    favorites = relationship("DBFavorite", back_populates="user", cascade="all, delete-orphan")
     audit_trail = relationship("AuditLog", back_populates="user")
     search_history = relationship("DBSearchHistory", back_populates="user")
     user_cards = relationship("DBUserCard", back_populates="user", cascade="all, delete-orphan")
@@ -56,11 +56,14 @@ class UserDevice(Base):
 # ----------------------------
 # FAVORITOS
 # ----------------------------
-class Favorite(Base):
+class DBFavorite(Base):
     __tablename__ = "favorites"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    physical_station_id = Column(String, nullable=True, index=True) 
+    line_id = Column(String, nullable=True, index=True)
     
     transport_type = Column(String, nullable=False)
     station_code = Column(String, nullable=False)
@@ -282,3 +285,18 @@ class DBBicingStation(Base):
     availability = Column(Integer)
     
     last_updated = Column(DateTime)
+
+
+class DBAppVersion(Base):
+    __tablename__ = "app_versions"
+
+    platform = Column(String, primary_key=True)
+    min_supported_version_code = Column(Integer, default=0)
+    latest_version_code = Column(Integer, default=0)
+    store_url = Column(String, nullable=False)
+    
+    force_title_key = Column(String, default="update_force_title_default")
+    force_message_key = Column(String, default="update_force_message_default")
+    
+    recommend_title_key = Column(String, default="update_recommend_title_default")
+    recommend_message_key = Column(String, default="update_recommend_message_default")

@@ -23,6 +23,7 @@ class Station(BaseModel):
     transport_type: TransportType
     
     description: Optional[str] = None
+    line_id: Optional[str] = None
     line_code: Optional[str] = None
     line_name: Optional[str] = None
 

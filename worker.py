@@ -3,6 +3,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
+from src.application.services.app_version_service import AppVersionService
 from src.infrastructure.external.api.amb_api_service import AmbApiService, AmbGtfsStore
 from src.core.logger import logger
 
@@ -64,6 +65,8 @@ class AppWorker:
         self.fgc_service = None
         self.alerts_service = None
 
+        self.app_version_service = None
+
     def init_services(self):
         logger.info("⚙️ Inicializando AppWorker Services...")
         
@@ -94,6 +97,9 @@ class AppWorker:
 
         # Alerts Service
         self.alerts_service = AlertsService(self.user_data_manager)
+
+        # App Version Service
+        self.app_version_service = AppVersionService()
 
         logger.info("✅ Todos los servicios inicializados correctamente.")
 

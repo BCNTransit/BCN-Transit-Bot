@@ -53,6 +53,7 @@ async def main():
         bicing_service=worker.bicing_service,
         fgc_service=worker.fgc_service,
         user_data_manager=worker.user_data_manager,
+        app_version_service=worker.app_version_service,
         lifespan=lifespan
     )
 
